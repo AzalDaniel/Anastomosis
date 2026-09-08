@@ -2,7 +2,7 @@
   "_comment": "Complexity ratchet baseline - see tools/complexity_gate.py. Regenerate ONLY in a commit that reduces debt or documents why it moved.",
   "blocks": {
     "src/anastomosis/cli_commands/migrate.py::_resolve_migration_profile": {
-      "cc": 17,
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/cli_commands/packsrc.py::pack_init": {
@@ -14,14 +14,10 @@
       "rank": "C"
     },
     "src/anastomosis/cli_commands/upload.py::upload_cmd": {
-      "cc": 22,
-      "rank": "D"
-    },
-    "src/anastomosis/commands/run.py::run_pipeline_command": {
-      "cc": 11,
+      "cc": 13,
       "rank": "C"
     },
-    "src/anastomosis/commands/source_init_command.py::run_source_init_command": {
+    "src/anastomosis/commands/run.py::run_pipeline_command": {
       "cc": 11,
       "rank": "C"
     },
@@ -33,12 +29,8 @@
       "cc": 12,
       "rank": "C"
     },
-    "src/anastomosis/core/fhir/export.py::_observation": {
-      "cc": 11,
-      "rank": "C"
-    },
     "src/anastomosis/core/fhir/export.py::_patient": {
-      "cc": 30,
+      "cc": 22,
       "rank": "D"
     },
     "src/anastomosis/core/fhir/export.py::to_bundle": {
@@ -50,7 +42,7 @@
       "rank": "C"
     },
     "src/anastomosis/core/fhir/ingest.py::_patient": {
-      "cc": 19,
+      "cc": 15,
       "rank": "C"
     },
     "src/anastomosis/core/fhir/ingest.py::from_bundle": {
@@ -63,10 +55,6 @@
     },
     "src/anastomosis/core/textutil.py::_SoapHtmlSanitizer._emit_start": {
       "cc": 13,
-      "rank": "C"
-    },
-    "src/anastomosis/deliver/archive/archive.py::ArchiveDeliverer._copy_patient_attachments": {
-      "cc": 11,
       "rank": "C"
     },
     "src/anastomosis/deliver/archive/archive.py::ArchiveDeliverer._route_unattributed_pdfs": {
@@ -85,10 +73,6 @@
       "cc": 17,
       "rank": "C"
     },
-    "src/anastomosis/deliver/bundle/bundle.py::BundleDeliverer.deliver_records": {
-      "cc": 11,
-      "rank": "C"
-    },
     "src/anastomosis/deliver/ccda_export/builder.py::_walk_value": {
       "cc": 14,
       "rank": "C"
@@ -99,14 +83,6 @@
     },
     "src/anastomosis/deliver/render_index.py::RenderIndex.load": {
       "cc": 14,
-      "rank": "C"
-    },
-    "src/anastomosis/deliver/verify/levels.py::L6RoundTrip": {
-      "cc": 13,
-      "rank": "C"
-    },
-    "src/anastomosis/deliver/verify/levels.py::L6RoundTrip.run": {
-      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/destinations/browserpack.py::SelectorMap.from_yaml_dict": {
@@ -147,10 +123,6 @@
     },
     "src/anastomosis/pipeline.py::_carry_attachments": {
       "cc": 12,
-      "rank": "C"
-    },
-    "src/anastomosis/pipeline.py::run_pipeline": {
-      "cc": 13,
       "rank": "C"
     },
     "src/anastomosis/qa/checks.py::DataIntegrityCheck": {
@@ -207,10 +179,6 @@
     },
     "src/anastomosis/sources/ccda/parser.py::_patient": {
       "cc": 14,
-      "rank": "C"
-    },
-    "src/anastomosis/sources/ccda/parser.py::parse_document": {
-      "cc": 17,
       "rank": "C"
     },
     "src/anastomosis/sources/fhir_r4/__init__.py::_resources_from_file": {
@@ -288,39 +256,29 @@
   },
   "modules": {
     "src/anastomosis/cli_commands/destination.py": {
-      "avg": 5.875,
+      "avg": 5.75,
       "rank": "B",
-      "total": 47
+      "total": 46
     },
     "src/anastomosis/cli_commands/migrate.py": {
-      "avg": 7.5,
+      "avg": 6.25,
       "rank": "B",
-      "total": 30
+      "total": 25
     },
     "src/anastomosis/cli_commands/upload.py": {
-      "avg": 12.5,
-      "rank": "C",
+      "avg": 6.25,
+      "rank": "B",
       "total": 25
     },
     "src/anastomosis/core/fhir/export.py": {
-      "avg": 5.8929,
+      "avg": 5.5185,
       "rank": "B",
-      "total": 165
+      "total": 149
     },
     "src/anastomosis/core/fhir/ingest.py": {
-      "avg": 5.7727,
+      "avg": 5.5714,
       "rank": "B",
-      "total": 127
-    },
-    "src/anastomosis/deliver/archive/archive.py": {
-      "avg": 5.1579,
-      "rank": "B",
-      "total": 98
-    },
-    "src/anastomosis/deliver/verify/levels.py": {
-      "avg": 5.8571,
-      "rank": "B",
-      "total": 123
+      "total": 117
     },
     "src/anastomosis/packs/generic_soap/context.py": {
       "avg": 9.0,
@@ -348,9 +306,9 @@
       "total": 36
     },
     "src/anastomosis/sources/fhir_r4/mapper.py": {
-      "avg": 8.1042,
+      "avg": 8.2553,
       "rank": "B",
-      "total": 389
+      "total": 388
     },
     "src/anastomosis/sources/pf_tebra/escript.py": {
       "avg": 6.0,
@@ -365,28 +323,28 @@
   },
   "reference": {
     "src/anastomosis/cli.py": {
-      "avg": 3.3684,
-      "total": 64
+      "avg": 3.8125,
+      "total": 61
     },
     "src/anastomosis/cli_commands/_paths.py": {
-      "avg": 1.5,
-      "total": 6
+      "avg": 2.0,
+      "total": 4
     },
     "src/anastomosis/cli_commands/delivery.py": {
       "avg": 1.0,
       "total": 1
     },
     "src/anastomosis/cli_commands/destination.py": {
-      "avg": 5.875,
-      "total": 47
+      "avg": 5.75,
+      "total": 46
     },
     "src/anastomosis/cli_commands/guide.py": {
-      "avg": 3.2759,
-      "total": 95
+      "avg": 3.3103,
+      "total": 96
     },
     "src/anastomosis/cli_commands/migrate.py": {
-      "avg": 7.5,
-      "total": 30
+      "avg": 6.25,
+      "total": 25
     },
     "src/anastomosis/cli_commands/packsrc.py": {
       "avg": 5.0,
@@ -397,8 +355,12 @@
       "total": 5
     },
     "src/anastomosis/cli_commands/upload.py": {
-      "avg": 12.5,
+      "avg": 6.25,
       "total": 25
+    },
+    "src/anastomosis/commands/learn.py": {
+      "avg": 3.9412,
+      "total": 67
     },
     "src/anastomosis/commands/migrate.py": {
       "avg": 2.48,
@@ -408,45 +370,37 @@
       "avg": 1.5,
       "total": 9
     },
-    "src/anastomosis/commands/packinit.py": {
-      "avg": 4.1667,
-      "total": 25
-    },
     "src/anastomosis/commands/profiles.py": {
       "avg": 1.9355,
       "total": 60
     },
     "src/anastomosis/commands/run.py": {
-      "avg": 3.0526,
-      "total": 58
+      "avg": 3.0,
+      "total": 57
     },
     "src/anastomosis/commands/runmanifest.py": {
       "avg": 2.35,
       "total": 47
     },
     "src/anastomosis/commands/selfcheck.py": {
-      "avg": 3.7333,
-      "total": 56
-    },
-    "src/anastomosis/commands/source_init_command.py": {
-      "avg": 4.0909,
-      "total": 45
+      "avg": 3.8125,
+      "total": 61
     },
     "src/anastomosis/commands/sourcelearn.py": {
       "avg": 4.7188,
       "total": 151
     },
     "src/anastomosis/commands/upload_command.py": {
-      "avg": 3.5385,
-      "total": 46
+      "avg": 3.3571,
+      "total": 47
     },
     "src/anastomosis/core/atomic.py": {
       "avg": 2.375,
       "total": 19
     },
     "src/anastomosis/core/ccda_codes.py": {
-      "avg": 4.6667,
-      "total": 14
+      "avg": 3.4,
+      "total": 17
     },
     "src/anastomosis/core/clock.py": {
       "avg": 2.3333,
@@ -461,12 +415,16 @@
       "total": 13
     },
     "src/anastomosis/core/fhir/export.py": {
-      "avg": 5.8929,
-      "total": 165
+      "avg": 5.5185,
+      "total": 149
+    },
+    "src/anastomosis/core/fhir/fields.py": {
+      "avg": 3.0,
+      "total": 27
     },
     "src/anastomosis/core/fhir/ingest.py": {
-      "avg": 5.7727,
-      "total": 127
+      "avg": 5.5714,
+      "total": 117
     },
     "src/anastomosis/core/hashutil.py": {
       "avg": 1.6667,
@@ -528,6 +486,10 @@
       "avg": 4.5,
       "total": 54
     },
+    "src/anastomosis/core/packdirs.py": {
+      "avg": 4.0,
+      "total": 12
+    },
     "src/anastomosis/core/pdfsnapshot.py": {
       "avg": 2.0,
       "total": 28
@@ -545,16 +507,16 @@
       "total": 52
     },
     "src/anastomosis/core/vesselmark.py": {
-      "avg": 3.2083,
-      "total": 77
+      "avg": 4.1818,
+      "total": 46
     },
     "src/anastomosis/deliver/_shared.py": {
-      "avg": 1.7,
-      "total": 17
+      "avg": 1.9091,
+      "total": 21
     },
     "src/anastomosis/deliver/archive/archive.py": {
-      "avg": 5.1579,
-      "total": 98
+      "avg": 4.1143,
+      "total": 144
     },
     "src/anastomosis/deliver/archive/templates.py": {
       "avg": 1.0,
@@ -612,13 +574,9 @@
       "avg": 1.3333,
       "total": 8
     },
-    "src/anastomosis/deliver/bundle/bundle.py": {
-      "avg": 4.9091,
-      "total": 54
-    },
     "src/anastomosis/deliver/ccda_export/builder.py": {
-      "avg": 4.1429,
-      "total": 290
+      "avg": 4.0417,
+      "total": 291
     },
     "src/anastomosis/deliver/ccda_export/deliverer.py": {
       "avg": 2.8182,
@@ -649,8 +607,8 @@
       "total": 48
     },
     "src/anastomosis/deliver/verify/levels.py": {
-      "avg": 5.8571,
-      "total": 123
+      "avg": 4.6,
+      "total": 69
     },
     "src/anastomosis/deliver/verify/types.py": {
       "avg": 1.3333,
@@ -665,16 +623,16 @@
       "total": 145
     },
     "src/anastomosis/destinations/loader.py": {
-      "avg": 3.6,
-      "total": 36
+      "avg": 3.3,
+      "total": 33
     },
     "src/anastomosis/destinations/registry.py": {
       "avg": 2.2143,
       "total": 31
     },
     "src/anastomosis/destinations/wizard.py": {
-      "avg": 1.5556,
-      "total": 14
+      "avg": 1.5,
+      "total": 15
     },
     "src/anastomosis/gui/__main__.py": {
       "avg": 4.5,
@@ -685,8 +643,8 @@
       "total": 15
     },
     "src/anastomosis/gui/consoles/runs.py": {
-      "avg": 3.4091,
-      "total": 75
+      "avg": 3.3043,
+      "total": 76
     },
     "src/anastomosis/gui/consoles/source.py": {
       "avg": 4.375,
@@ -701,8 +659,8 @@
       "total": 7
     },
     "src/anastomosis/gui/controller.py": {
-      "avg": 1.55,
-      "total": 93
+      "avg": 1.5593,
+      "total": 92
     },
     "src/anastomosis/gui/events.py": {
       "avg": 1.25,
@@ -749,12 +707,12 @@
       "total": 119
     },
     "src/anastomosis/pipeline.py": {
-      "avg": 4.6136,
-      "total": 203
+      "avg": 4.5333,
+      "total": 204
     },
     "src/anastomosis/qa/base.py": {
-      "avg": 1.7778,
-      "total": 16
+      "avg": 1.7143,
+      "total": 12
     },
     "src/anastomosis/qa/checks.py": {
       "avg": 5.7059,
@@ -765,8 +723,8 @@
       "total": 28
     },
     "src/anastomosis/qa/wholepatient.py": {
-      "avg": 3.0,
-      "total": 9
+      "avg": 3.3333,
+      "total": 10
     },
     "src/anastomosis/reconstruct/ccda_standard/renderer.py": {
       "avg": 2.2222,
@@ -777,8 +735,8 @@
       "total": 12
     },
     "src/anastomosis/reconstruct/engine.py": {
-      "avg": 2.3,
-      "total": 46
+      "avg": 2.2381,
+      "total": 47
     },
     "src/anastomosis/reconstruct/packctx.py": {
       "avg": 6.7586,
@@ -789,8 +747,8 @@
       "total": 8
     },
     "src/anastomosis/reconstruct/packs.py": {
-      "avg": 3.16,
-      "total": 79
+      "avg": 3.0455,
+      "total": 67
     },
     "src/anastomosis/reconstruct/packtrust.py": {
       "avg": 1.9167,
@@ -817,16 +775,16 @@
       "total": 352
     },
     "src/anastomosis/sources/ccda/parser.py": {
-      "avg": 4.1712,
-      "total": 463
+      "avg": 4.1607,
+      "total": 466
     },
     "src/anastomosis/sources/fhir_r4/__init__.py": {
       "avg": 6.0,
       "total": 36
     },
     "src/anastomosis/sources/fhir_r4/mapper.py": {
-      "avg": 8.1042,
-      "total": 389
+      "avg": 8.2553,
+      "total": 388
     },
     "src/anastomosis/sources/learned/__init__.py": {
       "avg": 4.75,

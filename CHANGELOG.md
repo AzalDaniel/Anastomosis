@@ -9,9 +9,29 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
-Post-0.7.0 audit work: a full pass over the shipped surfaces, driving the real
-CLI and the real GUI rather than reading them, with every finding raised as an
-issue and fixed in its own pull request.
+## [0.8.0] — 2026-09-08
+
+Two pieces of work, in that order. First an audit of everything 0.7.0 shipped,
+driving the real CLI and the real GUI rather than reading them, with every
+finding raised as an issue and fixed in its own pull request. Then a
+reduction pass: thirteen slices, each one merging things that did the same job
+in different words, each measured against a snapshot of what the previous
+commit wrote so that no deliverable changed a byte on the way.
+
+`src/` fell 52,070 lines to 42,312. Almost all of that is prose the code did
+not need — docstrings that narrated bug history and comments that restated the
+line below — which went from 32.4% of the tree to 21.1%. Executable code fell
+only 308 lines net, well short of the plan, because the per-subsystem estimates
+had counted prose the first slice already removed; the consolidations are real
+(one FHIR field table where there were three mappers, one deliverer where there
+were two, one learn capability where there were two flows) but they bought
+fewer lines than the plan assumed. Tests carry 1,670 more lines of code than
+before: every consolidation had to leave a guard behind.
+
+Nothing a user can do changed. Every command, flag and default is
+byte-identical, the C-CDA corpus digest over 6,144 documents is unmoved, and
+the greeting animation is the one deliberate exception — it now settles instead
+of breathing indefinitely.
 
 ### Added
 
@@ -864,6 +884,15 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **A version bump read as thirty-eight changed deliverables.** The safety net
+  normalises the running version out of JSON before comparing, but archive HTML
+  and bundle `README.txt` were digested raw, so bumping `__version__` for this
+  release turned the snapshot red on files whose bytes were otherwise
+  identical — proved by reverting the bump alone and watching it pass. The
+  version is now replaced by a fixed token in prose deliverables too, which
+  keeps its presence asserted: deleting the stamp altogether still fails, on
+  the same thirty-eight files.
 
 - **Two files whose names sanitize alike could take one delivered slot.** Every
   deliverer claims each delivered name against a per-pass ledger before it
@@ -2267,7 +2296,8 @@ archive. Everything below shipped across PRs
   (DTZ) rules, gitleaks pre-commit, least-privilege CI permissions. (#1)
 - `SECURITY.md` — reporting policy, threat model, and security posture. (#9)
 
-[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.4.0...v0.5.0

@@ -24,6 +24,7 @@ from tools.snapshot import (
     _compare_extra_input,
     _looks_like_absolute_path,
     _looks_like_version,
+    _mask_version,
     _parse_only,
     _restrict_baseline,
     capture_extra_input,
@@ -33,6 +34,7 @@ from tools.snapshot import (
     parse_extra_input,
     pdf_digest,
     resolved_anastomosis_module,
+    text_digest,
 )
 
 
@@ -369,3 +371,22 @@ def test_extra_input_drift_fails(tmp_path: Path) -> None:
     result["pipeline"]["json"]["loss_ledger.json"]["documents"] = 999
     target.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     assert main(["--extra-input", f"real={fixture_dir}:ccda", "--out", str(out_dir)]) == 1
+
+
+def test_the_running_version_is_masked_but_its_absence_is_not(tmp_path: Path) -> None:
+    """A release bump is not a changed deliverable; a vanished stamp still is."""
+    import anastomosis
+
+    version = anastomosis.__version__
+    stamped = tmp_path / "README.txt"
+    stamped.write_text(f"Written by anastomosis {version}.\n", encoding="utf-8")
+    bumped = tmp_path / "bumped.txt"
+    bumped.write_text("Written by anastomosis 99.99.99.\n", encoding="utf-8")
+    unstamped = tmp_path / "unstamped.txt"
+    unstamped.write_text("Written by anastomosis.\n", encoding="utf-8")
+
+    assert _mask_version(stamped.read_text(encoding="utf-8")) == (
+        "Written by anastomosis <version>.\n"
+    )
+    assert text_digest(stamped) != text_digest(unstamped)
+    assert text_digest(stamped) != text_digest(bumped)

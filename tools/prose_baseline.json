@@ -10,20 +10,20 @@
       "total": 11
     },
     "src/anastomosis/cli.py": {
-      "blank": 75,
-      "code": 315,
-      "comment": 80,
-      "docstring": 72,
-      "ratio": 0.325482,
-      "total": 542
+      "blank": 64,
+      "code": 290,
+      "comment": 65,
+      "docstring": 67,
+      "ratio": 0.312796,
+      "total": 486
     },
     "src/anastomosis/cli_commands/__init__.py": {
       "blank": 1,
       "code": 1,
       "comment": 0,
-      "docstring": 7,
-      "ratio": 0.875,
-      "total": 9
+      "docstring": 6,
+      "ratio": 0.857143,
+      "total": 8
     },
     "src/anastomosis/cli_commands/_options.py": {
       "blank": 13,
@@ -34,12 +34,12 @@
       "total": 63
     },
     "src/anastomosis/cli_commands/_paths.py": {
-      "blank": 13,
-      "code": 23,
+      "blank": 9,
+      "code": 19,
       "comment": 4,
       "docstring": 5,
-      "ratio": 0.28125,
-      "total": 45
+      "ratio": 0.321429,
+      "total": 37
     },
     "src/anastomosis/cli_commands/delivery.py": {
       "blank": 11,
@@ -51,35 +51,35 @@
     },
     "src/anastomosis/cli_commands/destination.py": {
       "blank": 34,
-      "code": 237,
+      "code": 235,
       "comment": 21,
-      "docstring": 53,
-      "ratio": 0.237942,
-      "total": 345
+      "docstring": 50,
+      "ratio": 0.232026,
+      "total": 340
     },
     "src/anastomosis/cli_commands/guide.py": {
-      "blank": 95,
-      "code": 473,
+      "blank": 97,
+      "code": 484,
       "comment": 27,
       "docstring": 66,
-      "ratio": 0.164311,
-      "total": 661
+      "ratio": 0.161179,
+      "total": 674
     },
     "src/anastomosis/cli_commands/migrate.py": {
-      "blank": 30,
-      "code": 212,
-      "comment": 34,
-      "docstring": 45,
-      "ratio": 0.271478,
-      "total": 321
+      "blank": 28,
+      "code": 213,
+      "comment": 38,
+      "docstring": 41,
+      "ratio": 0.270548,
+      "total": 320
     },
     "src/anastomosis/cli_commands/packsrc.py": {
       "blank": 50,
-      "code": 457,
+      "code": 445,
       "comment": 24,
-      "docstring": 97,
-      "ratio": 0.209343,
-      "total": 628
+      "docstring": 96,
+      "ratio": 0.212389,
+      "total": 615
     },
     "src/anastomosis/cli_commands/pipeline.py": {
       "blank": 7,
@@ -90,12 +90,12 @@
       "total": 115
     },
     "src/anastomosis/cli_commands/upload.py": {
-      "blank": 26,
-      "code": 225,
-      "comment": 29,
-      "docstring": 59,
-      "ratio": 0.28115,
-      "total": 339
+      "blank": 35,
+      "code": 236,
+      "comment": 23,
+      "docstring": 66,
+      "ratio": 0.273846,
+      "total": 360
     },
     "src/anastomosis/commands/__init__.py": {
       "blank": 0,
@@ -104,6 +104,14 @@
       "docstring": 0,
       "ratio": 0.0,
       "total": 0
+    },
+    "src/anastomosis/commands/learn.py": {
+      "blank": 64,
+      "code": 306,
+      "comment": 19,
+      "docstring": 29,
+      "ratio": 0.135593,
+      "total": 418
     },
     "src/anastomosis/commands/migrate.py": {
       "blank": 87,
@@ -121,14 +129,6 @@
       "ratio": 0.287234,
       "total": 112
     },
-    "src/anastomosis/commands/packinit.py": {
-      "blank": 32,
-      "code": 116,
-      "comment": 21,
-      "docstring": 35,
-      "ratio": 0.325581,
-      "total": 204
-    },
     "src/anastomosis/commands/profiles.py": {
       "blank": 67,
       "code": 288,
@@ -140,10 +140,10 @@
     "src/anastomosis/commands/run.py": {
       "blank": 69,
       "code": 304,
-      "comment": 73,
+      "comment": 71,
       "docstring": 69,
-      "ratio": 0.318386,
-      "total": 515
+      "ratio": 0.315315,
+      "total": 513
     },
     "src/anastomosis/commands/runmanifest.py": {
       "blank": 50,
@@ -154,20 +154,12 @@
       "total": 347
     },
     "src/anastomosis/commands/selfcheck.py": {
-      "blank": 44,
-      "code": 159,
+      "blank": 47,
+      "code": 170,
       "comment": 12,
       "docstring": 19,
-      "ratio": 0.163158,
-      "total": 234
-    },
-    "src/anastomosis/commands/source_init_command.py": {
-      "blank": 48,
-      "code": 221,
-      "comment": 37,
-      "docstring": 51,
-      "ratio": 0.28479,
-      "total": 357
+      "ratio": 0.154229,
+      "total": 248
     },
     "src/anastomosis/commands/sourcelearn.py": {
       "blank": 89,
@@ -178,12 +170,12 @@
       "total": 718
     },
     "src/anastomosis/commands/upload_command.py": {
-      "blank": 46,
-      "code": 192,
+      "blank": 49,
+      "code": 212,
       "comment": 95,
-      "docstring": 60,
-      "ratio": 0.446686,
-      "total": 393
+      "docstring": 63,
+      "ratio": 0.427027,
+      "total": 419
     },
     "src/anastomosis/core/__init__.py": {
       "blank": 0,
@@ -202,12 +194,12 @@
       "total": 115
     },
     "src/anastomosis/core/ccda_codes.py": {
-      "blank": 23,
-      "code": 101,
-      "comment": 53,
-      "docstring": 20,
-      "ratio": 0.41954,
-      "total": 197
+      "blank": 29,
+      "code": 182,
+      "comment": 59,
+      "docstring": 26,
+      "ratio": 0.318352,
+      "total": 296
     },
     "src/anastomosis/core/clock.py": {
       "blank": 9,
@@ -242,20 +234,28 @@
       "total": 15
     },
     "src/anastomosis/core/fhir/export.py": {
-      "blank": 73,
-      "code": 629,
-      "comment": 34,
-      "docstring": 42,
-      "ratio": 0.107801,
-      "total": 778
+      "blank": 70,
+      "code": 520,
+      "comment": 27,
+      "docstring": 41,
+      "ratio": 0.115646,
+      "total": 658
+    },
+    "src/anastomosis/core/fhir/fields.py": {
+      "blank": 44,
+      "code": 220,
+      "comment": 17,
+      "docstring": 17,
+      "ratio": 0.133858,
+      "total": 298
     },
     "src/anastomosis/core/fhir/ingest.py": {
-      "blank": 58,
-      "code": 466,
-      "comment": 13,
-      "docstring": 9,
-      "ratio": 0.045082,
-      "total": 546
+      "blank": 55,
+      "code": 416,
+      "comment": 11,
+      "docstring": 8,
+      "ratio": 0.043678,
+      "total": 490
     },
     "src/anastomosis/core/hashutil.py": {
       "blank": 19,
@@ -385,6 +385,14 @@
       "ratio": 0.252033,
       "total": 282
     },
+    "src/anastomosis/core/packdirs.py": {
+      "blank": 10,
+      "code": 27,
+      "comment": 0,
+      "docstring": 4,
+      "ratio": 0.129032,
+      "total": 41
+    },
     "src/anastomosis/core/pdfsnapshot.py": {
       "blank": 26,
       "code": 72,
@@ -442,12 +450,12 @@
       "total": 10
     },
     "src/anastomosis/deliver/_shared.py": {
-      "blank": 25,
-      "code": 84,
+      "blank": 27,
+      "code": 99,
       "comment": 4,
-      "docstring": 59,
-      "ratio": 0.428571,
-      "total": 172
+      "docstring": 64,
+      "ratio": 0.407186,
+      "total": 194
     },
     "src/anastomosis/deliver/archive/__init__.py": {
       "blank": 2,
@@ -458,28 +466,28 @@
       "total": 5
     },
     "src/anastomosis/deliver/archive/archive.py": {
-      "blank": 59,
-      "code": 483,
-      "comment": 78,
-      "docstring": 48,
-      "ratio": 0.206897,
-      "total": 668
+      "blank": 82,
+      "code": 649,
+      "comment": 98,
+      "docstring": 71,
+      "ratio": 0.206601,
+      "total": 900
     },
     "src/anastomosis/deliver/archive/templates.py": {
-      "blank": 14,
-      "code": 189,
+      "blank": 15,
+      "code": 214,
       "comment": 2,
-      "docstring": 13,
-      "ratio": 0.073529,
-      "total": 218
+      "docstring": 14,
+      "ratio": 0.069565,
+      "total": 245
     },
     "src/anastomosis/deliver/browser/__init__.py": {
-      "blank": 3,
-      "code": 80,
+      "blank": 0,
+      "code": 0,
       "comment": 0,
       "docstring": 10,
-      "ratio": 0.111111,
-      "total": 93
+      "ratio": 1.0,
+      "total": 10
     },
     "src/anastomosis/deliver/browser/attach.py": {
       "blank": 7,
@@ -593,14 +601,6 @@
       "ratio": 0.333333,
       "total": 5
     },
-    "src/anastomosis/deliver/bundle/bundle.py": {
-      "blank": 31,
-      "code": 267,
-      "comment": 29,
-      "docstring": 36,
-      "ratio": 0.195783,
-      "total": 363
-    },
     "src/anastomosis/deliver/ccda_export/__init__.py": {
       "blank": 2,
       "code": 10,
@@ -610,12 +610,12 @@
       "total": 21
     },
     "src/anastomosis/deliver/ccda_export/builder.py": {
-      "blank": 207,
-      "code": 983,
-      "comment": 164,
-      "docstring": 189,
-      "ratio": 0.264222,
-      "total": 1543
+      "blank": 211,
+      "code": 975,
+      "comment": 165,
+      "docstring": 188,
+      "ratio": 0.265813,
+      "total": 1539
     },
     "src/anastomosis/deliver/ccda_export/deliverer.py": {
       "blank": 30,
@@ -651,11 +651,11 @@
     },
     "src/anastomosis/deliver/fhir_api/destination.py": {
       "blank": 71,
-      "code": 336,
+      "code": 337,
       "comment": 48,
       "docstring": 74,
-      "ratio": 0.266376,
-      "total": 529
+      "ratio": 0.265795,
+      "total": 530
     },
     "src/anastomosis/deliver/render_index.py": {
       "blank": 24,
@@ -667,11 +667,11 @@
     },
     "src/anastomosis/deliver/router.py": {
       "blank": 28,
-      "code": 109,
+      "code": 106,
       "comment": 4,
       "docstring": 31,
-      "ratio": 0.243056,
-      "total": 172
+      "ratio": 0.248227,
+      "total": 169
     },
     "src/anastomosis/deliver/verify/__init__.py": {
       "blank": 3,
@@ -682,20 +682,20 @@
       "total": 40
     },
     "src/anastomosis/deliver/verify/composite.py": {
-      "blank": 38,
-      "code": 228,
+      "blank": 37,
+      "code": 221,
       "comment": 29,
       "docstring": 40,
-      "ratio": 0.232323,
-      "total": 335
+      "ratio": 0.237931,
+      "total": 327
     },
     "src/anastomosis/deliver/verify/levels.py": {
-      "blank": 70,
-      "code": 286,
-      "comment": 30,
-      "docstring": 58,
-      "ratio": 0.235294,
-      "total": 444
+      "blank": 46,
+      "code": 245,
+      "comment": 23,
+      "docstring": 53,
+      "ratio": 0.23676,
+      "total": 367
     },
     "src/anastomosis/deliver/verify/types.py": {
       "blank": 10,
@@ -706,12 +706,12 @@
       "total": 37
     },
     "src/anastomosis/destinations/__init__.py": {
-      "blank": 2,
-      "code": 62,
+      "blank": 0,
+      "code": 0,
       "comment": 0,
       "docstring": 7,
-      "ratio": 0.101449,
-      "total": 71
+      "ratio": 1.0,
+      "total": 7
     },
     "src/anastomosis/destinations/base.py": {
       "blank": 45,
@@ -723,19 +723,19 @@
     },
     "src/anastomosis/destinations/browserpack.py": {
       "blank": 103,
-      "code": 485,
-      "comment": 85,
+      "code": 462,
+      "comment": 79,
       "docstring": 196,
-      "ratio": 0.366841,
-      "total": 869
+      "ratio": 0.373134,
+      "total": 840
     },
     "src/anastomosis/destinations/loader.py": {
-      "blank": 30,
+      "blank": 29,
       "code": 136,
       "comment": 7,
-      "docstring": 53,
-      "ratio": 0.306122,
-      "total": 226
+      "docstring": 51,
+      "ratio": 0.298969,
+      "total": 223
     },
     "src/anastomosis/destinations/registry.py": {
       "blank": 40,
@@ -745,21 +745,13 @@
       "ratio": 0.423729,
       "total": 217
     },
-    "src/anastomosis/destinations/tebra/__init__.py": {
-      "blank": 1,
-      "code": 1,
-      "comment": 0,
-      "docstring": 8,
-      "ratio": 0.888889,
-      "total": 10
-    },
     "src/anastomosis/destinations/wizard.py": {
-      "blank": 21,
-      "code": 94,
-      "comment": 7,
-      "docstring": 40,
-      "ratio": 0.333333,
-      "total": 162
+      "blank": 24,
+      "code": 101,
+      "comment": 8,
+      "docstring": 39,
+      "ratio": 0.317568,
+      "total": 172
     },
     "src/anastomosis/gui/__init__.py": {
       "blank": 2,
@@ -781,33 +773,33 @@
       "blank": 3,
       "code": 13,
       "comment": 0,
-      "docstring": 9,
-      "ratio": 0.409091,
-      "total": 25
+      "docstring": 8,
+      "ratio": 0.380952,
+      "total": 24
     },
     "src/anastomosis/gui/consoles/packgen.py": {
       "blank": 16,
-      "code": 88,
+      "code": 90,
       "comment": 7,
       "docstring": 29,
-      "ratio": 0.290323,
-      "total": 140
+      "ratio": 0.285714,
+      "total": 142
     },
     "src/anastomosis/gui/consoles/runs.py": {
-      "blank": 54,
-      "code": 443,
-      "comment": 42,
-      "docstring": 84,
-      "ratio": 0.221441,
+      "blank": 55,
+      "code": 442,
+      "comment": 40,
+      "docstring": 86,
+      "ratio": 0.221831,
       "total": 623
     },
     "src/anastomosis/gui/consoles/source.py": {
       "blank": 25,
-      "code": 165,
+      "code": 161,
       "comment": 8,
       "docstring": 36,
-      "ratio": 0.210526,
-      "total": 234
+      "ratio": 0.214634,
+      "total": 230
     },
     "src/anastomosis/gui/consoles/upload.py": {
       "blank": 39,
@@ -826,12 +818,12 @@
       "total": 83
     },
     "src/anastomosis/gui/controller.py": {
-      "blank": 92,
-      "code": 278,
+      "blank": 89,
+      "code": 275,
       "comment": 27,
-      "docstring": 101,
-      "ratio": 0.315271,
-      "total": 498
+      "docstring": 96,
+      "ratio": 0.309045,
+      "total": 487
     },
     "src/anastomosis/gui/events.py": {
       "blank": 10,
@@ -874,12 +866,12 @@
       "total": 129
     },
     "src/anastomosis/packgen/emit.py": {
-      "blank": 110,
-      "code": 769,
-      "comment": 103,
-      "docstring": 111,
-      "ratio": 0.217701,
-      "total": 1093
+      "blank": 113,
+      "code": 601,
+      "comment": 107,
+      "docstring": 107,
+      "ratio": 0.262577,
+      "total": 928
     },
     "src/anastomosis/packgen/evidence.py": {
       "blank": 83,
@@ -922,20 +914,20 @@
       "total": 81
     },
     "src/anastomosis/packs/practice_fusion_soap/context.py": {
-      "blank": 116,
-      "code": 691,
-      "comment": 129,
-      "docstring": 154,
-      "ratio": 0.290554,
-      "total": 1090
+      "blank": 46,
+      "code": 343,
+      "comment": 73,
+      "docstring": 38,
+      "ratio": 0.244493,
+      "total": 500
     },
     "src/anastomosis/pipeline.py": {
-      "blank": 153,
-      "code": 771,
+      "blank": 157,
+      "code": 782,
       "comment": 111,
-      "docstring": 185,
-      "ratio": 0.277413,
-      "total": 1220
+      "docstring": 189,
+      "ratio": 0.277264,
+      "total": 1239
     },
     "src/anastomosis/qa/__init__.py": {
       "blank": 2,
@@ -946,12 +938,12 @@
       "total": 26
     },
     "src/anastomosis/qa/base.py": {
-      "blank": 22,
-      "code": 45,
+      "blank": 16,
+      "code": 37,
       "comment": 15,
-      "docstring": 17,
-      "ratio": 0.415584,
-      "total": 99
+      "docstring": 16,
+      "ratio": 0.455882,
+      "total": 84
     },
     "src/anastomosis/qa/checks.py": {
       "blank": 93,
@@ -964,18 +956,18 @@
     "src/anastomosis/qa/runner.py": {
       "blank": 18,
       "code": 99,
-      "comment": 4,
+      "comment": 2,
       "docstring": 14,
-      "ratio": 0.153846,
-      "total": 135
+      "ratio": 0.13913,
+      "total": 133
     },
     "src/anastomosis/qa/wholepatient.py": {
-      "blank": 17,
+      "blank": 16,
       "code": 77,
-      "comment": 16,
-      "docstring": 24,
-      "ratio": 0.34188,
-      "total": 134
+      "comment": 15,
+      "docstring": 22,
+      "ratio": 0.324561,
+      "total": 130
     },
     "src/anastomosis/reconstruct/__init__.py": {
       "blank": 2,
@@ -1010,20 +1002,20 @@
       "total": 71
     },
     "src/anastomosis/reconstruct/engine.py": {
-      "blank": 39,
-      "code": 222,
-      "comment": 55,
-      "docstring": 37,
-      "ratio": 0.292994,
-      "total": 353
+      "blank": 42,
+      "code": 239,
+      "comment": 56,
+      "docstring": 40,
+      "ratio": 0.286567,
+      "total": 377
     },
     "src/anastomosis/reconstruct/packctx.py": {
-      "blank": 12,
-      "code": 39,
-      "comment": 0,
-      "docstring": 40,
-      "ratio": 0.506329,
-      "total": 91
+      "blank": 86,
+      "code": 417,
+      "comment": 13,
+      "docstring": 96,
+      "ratio": 0.207224,
+      "total": 612
     },
     "src/anastomosis/reconstruct/packexec.py": {
       "blank": 16,
@@ -1034,12 +1026,12 @@
       "total": 200
     },
     "src/anastomosis/reconstruct/packs.py": {
-      "blank": 68,
-      "code": 337,
-      "comment": 43,
-      "docstring": 89,
-      "ratio": 0.28145,
-      "total": 537
+      "blank": 61,
+      "code": 304,
+      "comment": 37,
+      "docstring": 73,
+      "ratio": 0.2657,
+      "total": 475
     },
     "src/anastomosis/reconstruct/packtrust.py": {
       "blank": 26,
@@ -1066,12 +1058,12 @@
       "total": 28
     },
     "src/anastomosis/sources/_rowutil.py": {
-      "blank": 15,
-      "code": 26,
+      "blank": 32,
+      "code": 88,
       "comment": 2,
-      "docstring": 11,
-      "ratio": 0.333333,
-      "total": 54
+      "docstring": 22,
+      "ratio": 0.214286,
+      "total": 144
     },
     "src/anastomosis/sources/base.py": {
       "blank": 35,
@@ -1098,12 +1090,12 @@
       "total": 1558
     },
     "src/anastomosis/sources/ccda/parser.py": {
-      "blank": 299,
-      "code": 1346,
+      "blank": 301,
+      "code": 1373,
       "comment": 145,
-      "docstring": 347,
-      "ratio": 0.267682,
-      "total": 2137
+      "docstring": 351,
+      "ratio": 0.265383,
+      "total": 2170
     },
     "src/anastomosis/sources/fhir_r4/__init__.py": {
       "blank": 17,
@@ -1114,12 +1106,12 @@
       "total": 110
     },
     "src/anastomosis/sources/fhir_r4/mapper.py": {
-      "blank": 131,
-      "code": 1064,
+      "blank": 129,
+      "code": 1061,
       "comment": 97,
-      "docstring": 128,
-      "ratio": 0.174554,
-      "total": 1420
+      "docstring": 127,
+      "ratio": 0.174319,
+      "total": 1414
     },
     "src/anastomosis/sources/learned/__init__.py": {
       "blank": 13,
@@ -1179,11 +1171,11 @@
     },
     "src/anastomosis/sources/oracle_ehi/mapper.py": {
       "blank": 92,
-      "code": 401,
-      "comment": 44,
+      "code": 408,
+      "comment": 45,
       "docstring": 68,
-      "ratio": 0.218324,
-      "total": 605
+      "ratio": 0.216891,
+      "total": 613
     },
     "src/anastomosis/sources/pf_tebra/__init__.py": {
       "blank": 16,
@@ -1210,12 +1202,12 @@
       "total": 287
     },
     "src/anastomosis/sources/pf_tebra/mapper.py": {
-      "blank": 198,
-      "code": 1234,
-      "comment": 114,
-      "docstring": 138,
-      "ratio": 0.169583,
-      "total": 1684
+      "blank": 188,
+      "code": 1152,
+      "comment": 122,
+      "docstring": 127,
+      "ratio": 0.17773,
+      "total": 1589
     },
     "tests/e2e/test_golden_rendering.py": {
       "blank": 29,
@@ -1307,11 +1299,11 @@
     },
     "tests/gui_e2e/test_bridge_surface.py": {
       "blank": 26,
-      "code": 53,
-      "comment": 4,
+      "code": 61,
+      "comment": 5,
       "docstring": 29,
-      "ratio": 0.383721,
-      "total": 112
+      "ratio": 0.357895,
+      "total": 121
     },
     "tests/gui_e2e/test_calendar.py": {
       "blank": 26,
@@ -1362,12 +1354,12 @@
       "total": 879
     },
     "tests/gui_e2e/test_teach.py": {
-      "blank": 119,
-      "code": 405,
-      "comment": 37,
-      "docstring": 76,
-      "ratio": 0.218147,
-      "total": 637
+      "blank": 137,
+      "code": 464,
+      "comment": 38,
+      "docstring": 89,
+      "ratio": 0.21489,
+      "total": 728
     },
     "tests/gui_e2e/test_uploads.py": {
       "blank": 79,
@@ -1410,12 +1402,12 @@
       "total": 60
     },
     "tests/unit/test_archive.py": {
-      "blank": 141,
-      "code": 583,
+      "blank": 147,
+      "code": 614,
       "comment": 49,
-      "docstring": 87,
-      "ratio": 0.189152,
-      "total": 860
+      "docstring": 91,
+      "ratio": 0.185676,
+      "total": 901
     },
     "tests/unit/test_ast_equal.py": {
       "blank": 21,
@@ -1426,12 +1418,12 @@
       "total": 99
     },
     "tests/unit/test_atomic.py": {
-      "blank": 64,
-      "code": 183,
+      "blank": 68,
+      "code": 195,
       "comment": 9,
       "docstring": 45,
-      "ratio": 0.227848,
-      "total": 301
+      "ratio": 0.216867,
+      "total": 317
     },
     "tests/unit/test_attachments_carried.py": {
       "blank": 51,
@@ -1506,12 +1498,12 @@
       "total": 519
     },
     "tests/unit/test_browserpack.py": {
-      "blank": 197,
-      "code": 642,
-      "comment": 47,
-      "docstring": 115,
-      "ratio": 0.201493,
-      "total": 1001
+      "blank": 202,
+      "code": 675,
+      "comment": 50,
+      "docstring": 119,
+      "ratio": 0.200237,
+      "total": 1046
     },
     "tests/unit/test_build_msix.py": {
       "blank": 89,
@@ -1530,12 +1522,12 @@
       "total": 159
     },
     "tests/unit/test_bundle.py": {
-      "blank": 111,
-      "code": 461,
+      "blank": 120,
+      "code": 501,
       "comment": 11,
-      "docstring": 72,
-      "ratio": 0.152574,
-      "total": 655
+      "docstring": 79,
+      "ratio": 0.152284,
+      "total": 711
     },
     "tests/unit/test_ccda.py": {
       "blank": 228,
@@ -1546,12 +1538,12 @@
       "total": 1195
     },
     "tests/unit/test_ccda_corpus.py": {
-      "blank": 88,
-      "code": 490,
+      "blank": 90,
+      "code": 498,
       "comment": 72,
-      "docstring": 86,
-      "ratio": 0.243827,
-      "total": 736
+      "docstring": 88,
+      "ratio": 0.243161,
+      "total": 748
     },
     "tests/unit/test_ccda_delivered_documents.py": {
       "blank": 112,
@@ -1562,12 +1554,12 @@
       "total": 574
     },
     "tests/unit/test_ccda_export.py": {
-      "blank": 342,
-      "code": 2414,
+      "blank": 346,
+      "code": 2450,
       "comment": 173,
-      "docstring": 203,
-      "ratio": 0.134767,
-      "total": 3132
+      "docstring": 208,
+      "ratio": 0.134581,
+      "total": 3177
     },
     "tests/unit/test_ccda_ledger.py": {
       "blank": 355,
@@ -1626,12 +1618,12 @@
       "total": 129
     },
     "tests/unit/test_cli.py": {
-      "blank": 137,
-      "code": 634,
+      "blank": 143,
+      "code": 659,
       "comment": 78,
-      "docstring": 45,
-      "ratio": 0.162483,
-      "total": 894
+      "docstring": 48,
+      "ratio": 0.16051,
+      "total": 928
     },
     "tests/unit/test_cli_help_encoding.py": {
       "blank": 13,
@@ -1666,12 +1658,12 @@
       "total": 84
     },
     "tests/unit/test_cli_upload.py": {
-      "blank": 160,
-      "code": 491,
+      "blank": 163,
+      "code": 484,
       "comment": 47,
       "docstring": 46,
-      "ratio": 0.159247,
-      "total": 744
+      "ratio": 0.161179,
+      "total": 740
     },
     "tests/unit/test_clock.py": {
       "blank": 19,
@@ -1738,12 +1730,12 @@
       "total": 122
     },
     "tests/unit/test_deliver_atomicity.py": {
-      "blank": 21,
-      "code": 63,
+      "blank": 23,
+      "code": 73,
       "comment": 3,
       "docstring": 13,
-      "ratio": 0.202532,
-      "total": 100
+      "ratio": 0.179775,
+      "total": 112
     },
     "tests/unit/test_deliver_shared.py": {
       "blank": 49,
@@ -1762,12 +1754,12 @@
       "total": 348
     },
     "tests/unit/test_delivery_shortfall.py": {
-      "blank": 72,
-      "code": 191,
+      "blank": 74,
+      "code": 192,
       "comment": 3,
       "docstring": 54,
-      "ratio": 0.229839,
-      "total": 320
+      "ratio": 0.228916,
+      "total": 323
     },
     "tests/unit/test_destination_loader.py": {
       "blank": 33,
@@ -1810,12 +1802,12 @@
       "total": 283
     },
     "tests/unit/test_fhir.py": {
-      "blank": 98,
-      "code": 373,
-      "comment": 24,
-      "docstring": 57,
-      "ratio": 0.178414,
-      "total": 552
+      "blank": 134,
+      "code": 578,
+      "comment": 38,
+      "docstring": 82,
+      "ratio": 0.17192,
+      "total": 832
     },
     "tests/unit/test_fhir_client.py": {
       "blank": 105,
@@ -1858,12 +1850,12 @@
       "total": 31
     },
     "tests/unit/test_gui_assets.py": {
-      "blank": 108,
-      "code": 508,
-      "comment": 73,
+      "blank": 111,
+      "code": 513,
+      "comment": 74,
       "docstring": 53,
-      "ratio": 0.198738,
-      "total": 742
+      "ratio": 0.198437,
+      "total": 751
     },
     "tests/unit/test_gui_console_paths.py": {
       "blank": 20,
@@ -1875,11 +1867,11 @@
     },
     "tests/unit/test_gui_controller.py": {
       "blank": 464,
-      "code": 1723,
+      "code": 1724,
       "comment": 166,
       "docstring": 184,
-      "ratio": 0.168837,
-      "total": 2537
+      "ratio": 0.168756,
+      "total": 2538
     },
     "tests/unit/test_gui_jobs.py": {
       "blank": 50,
@@ -1898,12 +1890,12 @@
       "total": 190
     },
     "tests/unit/test_guide.py": {
-      "blank": 149,
-      "code": 589,
+      "blank": 153,
+      "code": 610,
       "comment": 31,
-      "docstring": 59,
-      "ratio": 0.132548,
-      "total": 828
+      "docstring": 61,
+      "ratio": 0.131054,
+      "total": 855
     },
     "tests/unit/test_hashutil.py": {
       "blank": 23,
@@ -1922,20 +1914,20 @@
       "total": 233
     },
     "tests/unit/test_import_boundaries.py": {
-      "blank": 28,
-      "code": 108,
-      "comment": 11,
-      "docstring": 53,
-      "ratio": 0.372093,
-      "total": 200
+      "blank": 43,
+      "code": 186,
+      "comment": 21,
+      "docstring": 44,
+      "ratio": 0.258964,
+      "total": 294
     },
     "tests/unit/test_learned_layout_handoff.py": {
       "blank": 110,
-      "code": 274,
+      "code": 286,
       "comment": 11,
       "docstring": 64,
-      "ratio": 0.2149,
-      "total": 459
+      "ratio": 0.207756,
+      "total": 471
     },
     "tests/unit/test_learned_runtime_integrity.py": {
       "blank": 28,
@@ -1946,12 +1938,12 @@
       "total": 178
     },
     "tests/unit/test_learned_source.py": {
-      "blank": 83,
-      "code": 401,
+      "blank": 89,
+      "code": 428,
       "comment": 20,
       "docstring": 6,
-      "ratio": 0.06089,
-      "total": 510
+      "ratio": 0.057269,
+      "total": 543
     },
     "tests/unit/test_learned_spec.py": {
       "blank": 35,
@@ -2035,11 +2027,11 @@
     },
     "tests/unit/test_one_patient_is_one_chart.py": {
       "blank": 230,
-      "code": 974,
+      "code": 973,
       "comment": 42,
       "docstring": 129,
-      "ratio": 0.149345,
-      "total": 1375
+      "ratio": 0.149476,
+      "total": 1374
     },
     "tests/unit/test_oracle_ehi.py": {
       "blank": 102,
@@ -2074,12 +2066,12 @@
       "total": 286
     },
     "tests/unit/test_packgen_emit.py": {
-      "blank": 103,
-      "code": 514,
+      "blank": 109,
+      "code": 534,
       "comment": 43,
       "docstring": 56,
-      "ratio": 0.161501,
-      "total": 716
+      "ratio": 0.156398,
+      "total": 742
     },
     "tests/unit/test_packgen_extract.py": {
       "blank": 34,
@@ -2091,11 +2083,11 @@
     },
     "tests/unit/test_packgen_image_only.py": {
       "blank": 34,
-      "code": 85,
+      "code": 89,
       "comment": 0,
       "docstring": 22,
-      "ratio": 0.205607,
-      "total": 141
+      "ratio": 0.198198,
+      "total": 145
     },
     "tests/unit/test_packgen_infer.py": {
       "blank": 52,
@@ -2115,11 +2107,11 @@
     },
     "tests/unit/test_packgen_ocr_evidence.py": {
       "blank": 156,
-      "code": 486,
+      "code": 503,
       "comment": 29,
       "docstring": 86,
-      "ratio": 0.191348,
-      "total": 757
+      "ratio": 0.186084,
+      "total": 774
     },
     "tests/unit/test_packgen_ocr_goldens.py": {
       "blank": 27,
@@ -2137,21 +2129,29 @@
       "ratio": 0.321285,
       "total": 297
     },
+    "tests/unit/test_packgen_templates.py": {
+      "blank": 20,
+      "code": 75,
+      "comment": 0,
+      "docstring": 11,
+      "ratio": 0.127907,
+      "total": 106
+    },
     "tests/unit/test_packinit.py": {
       "blank": 22,
-      "code": 106,
+      "code": 110,
       "comment": 2,
       "docstring": 12,
-      "ratio": 0.116667,
-      "total": 142
+      "ratio": 0.112903,
+      "total": 146
     },
     "tests/unit/test_packs.py": {
-      "blank": 39,
-      "code": 125,
-      "comment": 10,
-      "docstring": 7,
-      "ratio": 0.119718,
-      "total": 181
+      "blank": 56,
+      "code": 175,
+      "comment": 11,
+      "docstring": 11,
+      "ratio": 0.111675,
+      "total": 253
     },
     "tests/unit/test_packtrust.py": {
       "blank": 72,
@@ -2171,11 +2171,11 @@
     },
     "tests/unit/test_pf_pack.py": {
       "blank": 158,
-      "code": 715,
+      "code": 718,
       "comment": 62,
       "docstring": 101,
-      "ratio": 0.185649,
-      "total": 1036
+      "ratio": 0.185017,
+      "total": 1039
     },
     "tests/unit/test_pf_quarantine.py": {
       "blank": 85,
@@ -2187,11 +2187,11 @@
     },
     "tests/unit/test_pf_tebra.py": {
       "blank": 132,
-      "code": 745,
+      "code": 741,
       "comment": 74,
       "docstring": 97,
-      "ratio": 0.186681,
-      "total": 1048
+      "ratio": 0.1875,
+      "total": 1044
     },
     "tests/unit/test_pf_tebra_attachments.py": {
       "blank": 41,
@@ -2251,19 +2251,19 @@
     },
     "tests/unit/test_prose_gate.py": {
       "blank": 44,
-      "code": 196,
+      "code": 197,
       "comment": 10,
       "docstring": 1,
-      "ratio": 0.05314,
-      "total": 251
+      "ratio": 0.052885,
+      "total": 252
     },
     "tests/unit/test_qa.py": {
       "blank": 205,
-      "code": 710,
+      "code": 705,
       "comment": 42,
-      "docstring": 131,
-      "ratio": 0.195923,
-      "total": 1088
+      "docstring": 129,
+      "ratio": 0.195205,
+      "total": 1081
     },
     "tests/unit/test_qa_no_encounters.py": {
       "blank": 84,
@@ -2306,12 +2306,12 @@
       "total": 261
     },
     "tests/unit/test_render_index.py": {
-      "blank": 53,
-      "code": 204,
+      "blank": 58,
+      "code": 226,
       "comment": 19,
-      "docstring": 20,
-      "ratio": 0.160494,
-      "total": 296
+      "docstring": 23,
+      "ratio": 0.156716,
+      "total": 326
     },
     "tests/unit/test_render_provenance.py": {
       "blank": 102,
@@ -2346,20 +2346,20 @@
       "total": 179
     },
     "tests/unit/test_rowutil.py": {
-      "blank": 12,
-      "code": 21,
+      "blank": 25,
+      "code": 83,
       "comment": 0,
-      "docstring": 28,
-      "ratio": 0.571429,
-      "total": 61
+      "docstring": 35,
+      "ratio": 0.29661,
+      "total": 143
     },
     "tests/unit/test_run_binding.py": {
       "blank": 134,
-      "code": 601,
+      "code": 608,
       "comment": 22,
       "docstring": 45,
-      "ratio": 0.100299,
-      "total": 802
+      "ratio": 0.099259,
+      "total": 809
     },
     "tests/unit/test_sbom_tool.py": {
       "blank": 17,
@@ -2387,11 +2387,11 @@
     },
     "tests/unit/test_selfcheck.py": {
       "blank": 21,
-      "code": 58,
+      "code": 59,
       "comment": 6,
       "docstring": 17,
-      "ratio": 0.283951,
-      "total": 102
+      "ratio": 0.280488,
+      "total": 103
     },
     "tests/unit/test_smoke_windows_liveness.py": {
       "blank": 27,
@@ -2410,20 +2410,20 @@
       "total": 492
     },
     "tests/unit/test_snapshot_tool.py": {
-      "blank": 74,
-      "code": 278,
+      "blank": 78,
+      "code": 294,
       "comment": 10,
-      "docstring": 9,
-      "ratio": 0.063973,
-      "total": 371
+      "docstring": 10,
+      "ratio": 0.063694,
+      "total": 392
     },
     "tests/unit/test_source_init_command.py": {
       "blank": 62,
-      "code": 326,
+      "code": 337,
       "comment": 10,
       "docstring": 48,
-      "ratio": 0.151042,
-      "total": 446
+      "ratio": 0.146835,
+      "total": 457
     },
     "tests/unit/test_sourcelearn.py": {
       "blank": 50,
@@ -2490,12 +2490,12 @@
       "total": 726
     },
     "tests/unit/test_v9_schema_reference.py": {
-      "blank": 30,
-      "code": 88,
-      "comment": 10,
-      "docstring": 39,
-      "ratio": 0.357664,
-      "total": 167
+      "blank": 33,
+      "code": 87,
+      "comment": 8,
+      "docstring": 38,
+      "ratio": 0.345865,
+      "total": 166
     },
     "tests/unit/test_verify_composite.py": {
       "blank": 61,
@@ -2507,11 +2507,11 @@
     },
     "tests/unit/test_verify_levels.py": {
       "blank": 122,
-      "code": 344,
+      "code": 342,
       "comment": 47,
       "docstring": 32,
-      "ratio": 0.186761,
-      "total": 545
+      "ratio": 0.187648,
+      "total": 543
     },
     "tests/unit/test_vesselmark.py": {
       "blank": 130,
@@ -2535,32 +2535,14 @@
     {
       "file": "src/anastomosis/cli_commands/migrate.py",
       "kind": "docstring",
-      "line": 293,
+      "line": 292,
       "text": "``--rebind`` is how you say the earlier artifacts no longer stand."
     },
     {
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "kind": "docstring",
-      "line": 261,
+      "line": 250,
       "text": "no longer needs."
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "kind": "docstring",
-      "line": 362,
-      "text": "``build_context`` previously re-scanned each collection several times"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "kind": "comment",
-      "line": 500,
-      "text": "#: Six sections used to print the vendor's own empty state \u2014 \"No implantable"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "kind": "comment",
-      "line": 616,
-      "text": "# \"-\". LOUD: the alternative spelling this used to fall back to (\"PRN\") is a"
     }
   ],
   "over_long_docstrings": [
@@ -2576,7 +2558,7 @@
       "file": "src/anastomosis/cli.py",
       "length": 9,
       "limit": 5,
-      "line": 222,
+      "line": 191,
       "name": "doctor_cmd",
       "scope": "function"
     },
@@ -2590,17 +2572,9 @@
     },
     {
       "file": "src/anastomosis/cli_commands/destination.py",
-      "length": 6,
-      "limit": 5,
-      "line": 63,
-      "name": "_local_pack_status",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/cli_commands/destination.py",
       "length": 9,
       "limit": 5,
-      "line": 79,
+      "line": 73,
       "name": "_route_status",
       "scope": "function"
     },
@@ -2608,7 +2582,7 @@
       "file": "src/anastomosis/cli_commands/destination.py",
       "length": 9,
       "limit": 5,
-      "line": 205,
+      "line": 199,
       "name": "_prompt_slot",
       "scope": "function"
     },
@@ -2616,7 +2590,7 @@
       "file": "src/anastomosis/cli_commands/destination.py",
       "length": 12,
       "limit": 5,
-      "line": 270,
+      "line": 264,
       "name": "destination_init",
       "scope": "function"
     },
@@ -2632,15 +2606,7 @@
       "file": "src/anastomosis/cli_commands/migrate.py",
       "length": 8,
       "limit": 5,
-      "line": 29,
-      "name": "_resolve_migration_profile",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/cli_commands/migrate.py",
-      "length": 8,
-      "limit": 5,
-      "line": 90,
+      "line": 89,
       "name": "_exit_on_pipeline_error",
       "scope": "function"
     },
@@ -2648,7 +2614,7 @@
       "file": "src/anastomosis/cli_commands/migrate.py",
       "length": 12,
       "limit": 5,
-      "line": 105,
+      "line": 104,
       "name": "_run_migration",
       "scope": "function"
     },
@@ -2656,7 +2622,7 @@
       "file": "src/anastomosis/cli_commands/migrate.py",
       "length": 13,
       "limit": 5,
-      "line": 282,
+      "line": 281,
       "name": "migrate_cmd",
       "scope": "function"
     },
@@ -2664,7 +2630,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 6,
       "limit": 5,
-      "line": 28,
+      "line": 27,
       "name": "_synthetic_preview_record",
       "scope": "function"
     },
@@ -2672,7 +2638,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 6,
       "limit": 5,
-      "line": 127,
+      "line": 126,
       "name": "_render_preview",
       "scope": "function"
     },
@@ -2680,7 +2646,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 7,
       "limit": 5,
-      "line": 181,
+      "line": 170,
       "name": "_engine_fault_advice",
       "scope": "function"
     },
@@ -2688,7 +2654,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 6,
       "limit": 5,
-      "line": 198,
+      "line": 187,
       "name": "_ocr_required_advice",
       "scope": "function"
     },
@@ -2696,7 +2662,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 6,
       "limit": 5,
-      "line": 235,
+      "line": 224,
       "name": "_note_ocr_evidence",
       "scope": "function"
     },
@@ -2704,7 +2670,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 7,
       "limit": 5,
-      "line": 256,
+      "line": 245,
       "name": "_print_pack_next_steps",
       "scope": "function"
     },
@@ -2712,7 +2678,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 25,
       "limit": 5,
-      "line": 328,
+      "line": 317,
       "name": "pack_init",
       "scope": "function"
     },
@@ -2720,7 +2686,7 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 8,
       "limit": 5,
-      "line": 447,
+      "line": 432,
       "name": "_refuse_analysis",
       "scope": "function"
     },
@@ -2728,13 +2694,13 @@
       "file": "src/anastomosis/cli_commands/packsrc.py",
       "length": 12,
       "limit": 5,
-      "line": 529,
+      "line": 514,
       "name": "source_init",
       "scope": "function"
     },
     {
       "file": "src/anastomosis/cli_commands/upload.py",
-      "length": 19,
+      "length": 18,
       "limit": 10,
       "line": 1,
       "name": "<module>",
@@ -2744,7 +2710,7 @@
       "file": "src/anastomosis/cli_commands/upload.py",
       "length": 15,
       "limit": 5,
-      "line": 42,
+      "line": 41,
       "name": "_drive_or_exit",
       "scope": "function"
     },
@@ -2752,7 +2718,7 @@
       "file": "src/anastomosis/cli_commands/upload.py",
       "length": 25,
       "limit": 5,
-      "line": 184,
+      "line": 259,
       "name": "upload_cmd",
       "scope": "function"
     },
@@ -2760,7 +2726,7 @@
       "file": "src/anastomosis/core/fhir/export.py",
       "length": 6,
       "limit": 5,
-      "line": 66,
+      "line": 68,
       "name": "_urn",
       "scope": "function"
     },
@@ -2800,7 +2766,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 115,
+      "line": 72,
       "name": "PageLike",
       "scope": "class"
     },
@@ -2808,7 +2774,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 7,
       "limit": 5,
-      "line": 150,
+      "line": 107,
       "name": "PageLike.select_option",
       "scope": "function"
     },
@@ -2816,7 +2782,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 177,
+      "line": 134,
       "name": "PlaywrightPageAdapter",
       "scope": "class"
     },
@@ -2824,7 +2790,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 261,
+      "line": 218,
       "name": "SelectorMap",
       "scope": "class"
     },
@@ -2832,7 +2798,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 8,
       "limit": 5,
-      "line": 301,
+      "line": 258,
       "name": "SelectorMap.from_yaml_dict",
       "scope": "function"
     },
@@ -2840,7 +2806,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 358,
+      "line": 329,
       "name": "_unconfigured",
       "scope": "function"
     },
@@ -2848,7 +2814,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 371,
+      "line": 342,
       "name": "_render_date",
       "scope": "function"
     },
@@ -2856,7 +2822,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 9,
       "limit": 5,
-      "line": 405,
+      "line": 376,
       "name": "_date_parts",
       "scope": "function"
     },
@@ -2864,7 +2830,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 10,
       "limit": 5,
-      "line": 419,
+      "line": 390,
       "name": "BrowserPackConfig",
       "scope": "class"
     },
@@ -2872,7 +2838,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 448,
+      "line": 419,
       "name": "BrowserPackConfig.render_upload_date",
       "scope": "function"
     },
@@ -2880,7 +2846,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 8,
       "limit": 5,
-      "line": 458,
+      "line": 429,
       "name": "BrowserPackDestination",
       "scope": "class"
     },
@@ -2888,7 +2854,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 7,
       "limit": 5,
-      "line": 532,
+      "line": 503,
       "name": "BrowserPackDestination.release",
       "scope": "function"
     },
@@ -2896,7 +2862,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 9,
       "limit": 5,
-      "line": 552,
+      "line": 523,
       "name": "BrowserPackDestination.resolve",
       "scope": "function"
     },
@@ -2904,7 +2870,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 616,
+      "line": 587,
       "name": "BrowserPackDestination.current_patient_matches",
       "scope": "function"
     },
@@ -2912,7 +2878,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 642,
+      "line": 613,
       "name": "BrowserPackDestination.existing_fingerprints",
       "scope": "function"
     },
@@ -2920,7 +2886,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 10,
       "limit": 5,
-      "line": 656,
+      "line": 627,
       "name": "BrowserPackDestination.upload",
       "scope": "function"
     },
@@ -2928,7 +2894,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 10,
       "limit": 5,
-      "line": 702,
+      "line": 673,
       "name": "BrowserPackDestination._fill_upload_form",
       "scope": "function"
     },
@@ -2936,7 +2902,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 749,
+      "line": 720,
       "name": "BrowserPackDestination._choose",
       "scope": "function"
     },
@@ -2944,7 +2910,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 777,
+      "line": 748,
       "name": "BrowserPackDestination._type_document_date",
       "scope": "function"
     },
@@ -2952,7 +2918,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 7,
       "limit": 5,
-      "line": 799,
+      "line": 770,
       "name": "BrowserPackDestination._check_dialog_patient",
       "scope": "function"
     },
@@ -2960,7 +2926,7 @@
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 7,
       "limit": 5,
-      "line": 844,
+      "line": 815,
       "name": "BrowserPackDestination._name_present",
       "scope": "function"
     },
@@ -2968,7 +2934,7 @@
       "file": "src/anastomosis/destinations/loader.py",
       "length": 6,
       "limit": 5,
-      "line": 56,
+      "line": 61,
       "name": "LoadedBrowserPack",
       "scope": "class"
     },
@@ -2976,7 +2942,7 @@
       "file": "src/anastomosis/destinations/loader.py",
       "length": 8,
       "limit": 5,
-      "line": 154,
+      "line": 134,
       "name": "_resolve_selectors",
       "scope": "function"
     },
@@ -2984,7 +2950,7 @@
       "file": "src/anastomosis/destinations/loader.py",
       "length": 7,
       "limit": 5,
-      "line": 188,
+      "line": 168,
       "name": "load_destination_pack",
       "scope": "function"
     },
@@ -3032,7 +2998,7 @@
       "file": "src/anastomosis/destinations/wizard.py",
       "length": 6,
       "limit": 5,
-      "line": 77,
+      "line": 78,
       "name": "CdpSelectorValidator",
       "scope": "class"
     },
@@ -3040,16 +3006,8 @@
       "file": "src/anastomosis/destinations/wizard.py",
       "length": 6,
       "limit": 5,
-      "line": 130,
+      "line": 143,
       "name": "write_selectors",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 6,
-      "limit": 5,
-      "line": 146,
-      "name": "registry_overlay_snippet",
       "scope": "function"
     },
     {
@@ -3126,7 +3084,7 @@
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 21,
+      "length": 13,
       "limit": 10,
       "line": 1,
       "name": "<module>",
@@ -3134,99 +3092,11 @@
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 7,
-      "limit": 5,
-      "line": 121,
-      "name": "_med_display_name",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 11,
-      "limit": 5,
-      "line": 315,
-      "name": "_fold_blood_pressure",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 10,
-      "limit": 5,
-      "line": 360,
-      "name": "_RecordViewIndex",
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
       "length": 6,
       "limit": 5,
-      "line": 550,
-      "name": "_social_history_context",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 10,
-      "limit": 5,
-      "line": 584,
+      "line": 282,
       "name": "build_record_context",
       "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 9,
-      "limit": 5,
-      "line": 921,
-      "name": "_concern_view",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 9,
-      "limit": 5,
-      "line": 937,
-      "name": "_elsewhere_count",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 6,
-      "limit": 5,
-      "line": 950,
-      "name": "_screening_events",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 14,
-      "limit": 5,
-      "line": 966,
-      "name": "_screening_view",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 9,
-      "limit": 5,
-      "line": 1019,
-      "name": "_flowsheet_record_index",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 8,
-      "limit": 5,
-      "line": 1050,
-      "name": "_build_flowsheet",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/qa/wholepatient.py",
-      "length": 11,
-      "limit": 10,
-      "line": 1,
-      "name": "<module>",
-      "scope": "module"
     },
     {
       "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
@@ -3280,7 +3150,7 @@
       "file": "src/anastomosis/reconstruct/engine.py",
       "length": 8,
       "limit": 5,
-      "line": 85,
+      "line": 86,
       "name": "_render_conservation",
       "scope": "function"
     },
@@ -3288,7 +3158,7 @@
       "file": "src/anastomosis/reconstruct/engine.py",
       "length": 8,
       "limit": 5,
-      "line": 189,
+      "line": 190,
       "name": "ReconstructionEngine._allocate_target",
       "scope": "function"
     },
@@ -3296,23 +3166,7 @@
       "file": "src/anastomosis/reconstruct/packctx.py",
       "length": 6,
       "limit": 5,
-      "line": 36,
-      "name": "record_cache_of",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packctx.py",
-      "length": 8,
-      "limit": 5,
-      "line": 49,
-      "name": "observations_by_encounter",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packctx.py",
-      "length": 16,
-      "limit": 5,
-      "line": 68,
+      "line": 158,
       "name": "vitals_elsewhere_in_record",
       "scope": "function"
     },
@@ -3320,7 +3174,7 @@
       "file": "src/anastomosis/reconstruct/packs.py",
       "length": 8,
       "limit": 5,
-      "line": 124,
+      "line": 116,
       "name": "PackCoverage",
       "scope": "class"
     },
@@ -3328,39 +3182,15 @@
       "file": "src/anastomosis/reconstruct/packs.py",
       "length": 9,
       "limit": 5,
-      "line": 260,
+      "line": 252,
       "name": "_load_context_builder_from_source",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 6,
-      "limit": 5,
-      "line": 293,
-      "name": "_finish_load",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 8,
-      "limit": 5,
-      "line": 356,
-      "name": "_load_pack_snapshot",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 6,
-      "limit": 5,
-      "line": 390,
-      "name": "_packs_under",
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/packs.py",
       "length": 9,
       "limit": 5,
-      "line": 437,
+      "line": 369,
       "name": "discover_packs",
       "scope": "function"
     },
@@ -3368,7 +3198,7 @@
       "file": "src/anastomosis/reconstruct/packs.py",
       "length": 6,
       "limit": 5,
-      "line": 470,
+      "line": 408,
       "name": "_discover_one",
       "scope": "function"
     },
@@ -3376,7 +3206,7 @@
       "file": "src/anastomosis/reconstruct/packs.py",
       "length": 7,
       "limit": 5,
-      "line": 512,
+      "line": 450,
       "name": "_load_trusted_external",
       "scope": "function"
     },
@@ -3464,7 +3294,7 @@
       "file": "tests/unit/test_bundle.py",
       "length": 6,
       "limit": 5,
-      "line": 211,
+      "line": 242,
       "name": "test_bundle_qa_slice_carries_the_record_summarys_verdict",
       "scope": "function"
     },
@@ -3472,7 +3302,7 @@
       "file": "tests/unit/test_bundle.py",
       "length": 6,
       "limit": 5,
-      "line": 395,
+      "line": 422,
       "name": "test_two_documents_both_land_without_overwriting_each_other",
       "scope": "function"
     },
@@ -3480,7 +3310,7 @@
       "file": "tests/unit/test_bundle.py",
       "length": 9,
       "limit": 5,
-      "line": 434,
+      "line": 490,
       "name": "test_the_two_artifact_fixture_resolves_through_the_real_cli",
       "scope": "function"
     },
@@ -3488,7 +3318,7 @@
       "file": "tests/unit/test_fhir.py",
       "length": 8,
       "limit": 5,
-      "line": 257,
+      "line": 270,
       "name": "test_the_records_own_runtime_id_does_not_reach_the_bundle",
       "scope": "function"
     },
@@ -3503,12 +3333,12 @@
   ],
   "packages": {
     "anastomosis": {
-      "blank": 5622,
-      "code": 27612,
-      "comment": 3230,
-      "docstring": 6351,
-      "ratio": 0.257602,
-      "total": 42815
+      "blank": 5635,
+      "code": 27337,
+      "comment": 3126,
+      "docstring": 6214,
+      "ratio": 0.254656,
+      "total": 42312
     },
     "tests.e2e": {
       "blank": 186,
@@ -3519,12 +3349,12 @@
       "total": 1030
     },
     "tests.gui_e2e": {
-      "blank": 829,
-      "code": 2999,
-      "comment": 292,
-      "docstring": 516,
-      "ratio": 0.212241,
-      "total": 4636
+      "blank": 847,
+      "code": 3066,
+      "comment": 294,
+      "docstring": 529,
+      "ratio": 0.211623,
+      "total": 4736
     },
     "tests.integration": {
       "blank": 37,
@@ -3535,21 +3365,21 @@
       "total": 225
     },
     "tests.unit": {
-      "blank": 9945,
-      "code": 36984,
-      "comment": 2838,
-      "docstring": 5310,
-      "ratio": 0.180537,
-      "total": 55077
+      "blank": 10120,
+      "code": 37802,
+      "comment": 2865,
+      "docstring": 5376,
+      "ratio": 0.178985,
+      "total": 56163
     }
   },
   "repo": {
-    "blank": 16619,
-    "code": 68391,
-    "comment": 6463,
-    "docstring": 12310,
-    "ratio": 0.215376,
-    "total": 103783
+    "blank": 16825,
+    "code": 69001,
+    "comment": 6388,
+    "docstring": 12252,
+    "ratio": 0.212686,
+    "total": 104466
   },
   "tool": "tools/prose_gate.py"
 }

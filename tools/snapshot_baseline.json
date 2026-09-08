@@ -955,7 +955,7 @@
         "files": [
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
@@ -965,7 +965,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -975,7 +975,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "charts/_PHI_WARNING_README.txt"
           },
           {
@@ -1619,22 +1619,22 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
             "digest": "8ea0a28fcd51cb4c5fcc0484ff45c11ff4ab0f739d2146e3be273b372ad83464",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/LICENSES/NOTICE.txt"
           },
           {
             "digest": "bbe74c56ed4daa6346737242a01e5a748911821f008f7a8882550128b98d37da",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/README.txt"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/_PHI_WARNING_README.txt"
           },
           {
@@ -1648,7 +1648,7 @@
             "relpath": "arch/assets/anast.css"
           },
           {
-            "digest": "4209a804b5fde1108b21c2ce26692b69016e472221fa0bee1358f5057124c3fd",
+            "digest": "3626efc5faafdc441b488029ee9f103b768e33a21097feee045b73270ce84097",
             "kind": "html",
             "relpath": "arch/index.html"
           },
@@ -1663,17 +1663,17 @@
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/bundle.json"
           },
           {
-            "digest": "5ac5fd823ff0d3156534133df22cc0b5f11a7e294ab048c993edbcac12f6529c",
+            "digest": "972d3478a505e7eb33fcd4ecd9c6af61938c29d2aaa2c5cc92b935ff06681e8a",
             "kind": "html",
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/encounters/555c7156-31ec-5fdc-a9f7-5bbd15c3b054.html"
           },
           {
-            "digest": "b670e0cc78743ba1ff449c0ca0e486bf7baaba726a5aec5f42f96c6b018e655b",
+            "digest": "2c060d274ed1e2ab633df08ef3dfe94f0d0a4f1e496ed9adfaeb10a7180babcf",
             "kind": "html",
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/encounters/f86ca1d7-90a7-5481-b280-3b17b44272f7.html"
           },
           {
-            "digest": "41000da989b46261f27cce84cf7884eca008f847cfd37c85c5d1f7327c32b6d3",
+            "digest": "3ba5eee08514bce766f35fee5a26aed373dacf763bc0bcdb70d8555ad80f313e",
             "kind": "html",
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/index.html"
           },
@@ -1688,8 +1688,8 @@
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/pdfs/Specimen_Cora_05-10-2023.pdf"
           },
           {
-            "digest": "b8ecbf7476be007f75da3b20d30867c3f83c63ff9b259555c2cf046f92c30486",
-            "kind": "other",
+            "digest": "d36ebb35dad1777dcc3d12c69caaf1a8ba1556cbcd3ebcab332a45c057e628e9",
+            "kind": "text",
             "relpath": "bundle/9a84356f-bca7-5c4a-800c-f68b1021da82/README.txt"
           },
           {
@@ -1714,7 +1714,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
@@ -1724,7 +1724,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -1744,7 +1744,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "record-summary/_PHI_WARNING_README.txt"
           },
           {
@@ -2611,22 +2611,22 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
             "digest": "8ea0a28fcd51cb4c5fcc0484ff45c11ff4ab0f739d2146e3be273b372ad83464",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/LICENSES/NOTICE.txt"
           },
           {
             "digest": "bbe74c56ed4daa6346737242a01e5a748911821f008f7a8882550128b98d37da",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/README.txt"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/_PHI_WARNING_README.txt"
           },
           {
@@ -2640,7 +2640,7 @@
             "relpath": "arch/assets/anast.css"
           },
           {
-            "digest": "a0004c4df51279eef6dc05a3ad2f1e2ecb8ceb06054718c39f8d3fe4aa34927f",
+            "digest": "d367abcd7bfea1ff0849096dce47550f4354bc37b54c370aa5e46d21efb14711",
             "kind": "html",
             "relpath": "arch/index.html"
           },
@@ -2655,17 +2655,17 @@
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/bundle.json"
           },
           {
-            "digest": "8b364c33461daa08f91313585e71f06516714bdeaca9f02e28acb3cb5da99d63",
+            "digest": "d1c8ed4657ab66484baa494e1723bbb03623b5e9a47415fc598ab6f9cc65483a",
             "kind": "html",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/encounters/feedface-0002-0000-0000-000000000001.html"
           },
           {
-            "digest": "984efc5f29344b346967333a30573495e7f4c43855737d0194c386eaa068c68b",
+            "digest": "0964dd06bffbf8ca03b1d5b2dc633b11e9d1c25b3d9c8e9919681007fa659e30",
             "kind": "html",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/encounters/feedface-0002-0000-0000-000000000002.html"
           },
           {
-            "digest": "d50e74edf016e4a3adc84ada7882ec5f015de6ebf8069019b04e8380c478644d",
+            "digest": "666b6bcc05e6292a866945591829c70e15a99ee5e6497d9ca9ca39bb2a0123bc",
             "kind": "html",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/index.html"
           },
@@ -2685,12 +2685,12 @@
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000002/bundle.json"
           },
           {
-            "digest": "a5287cebdd6b17ef50e93880205a6d317bc110c0b75f08fac253f183b7cac01a",
+            "digest": "eb2ca5a86db1d838c6ca812de779fe1a2777740bf08a49149311ad109b59bc7b",
             "kind": "html",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000002/encounters/feedface-0002-0000-0000-000000000003.html"
           },
           {
-            "digest": "7004f3038f3f11a31a2c1f987d42422a195b57ec7cf583e54420c476447f0909",
+            "digest": "ab72bf89e65365867b57254192e2a0263306aa0d7c56aa65502fcf2eb46940f5",
             "kind": "html",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000002/index.html"
           },
@@ -2701,12 +2701,12 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "4db23bc02a042e7cf48a4057797832c3afe8250d7bceab76c28a906eeb6bd395",
-            "kind": "other",
+            "digest": "ad45154b1170c84021c442450c30557bd1b1a992313f558c3925201de235b34c",
+            "kind": "text",
             "relpath": "bundle/feedface-0001-0000-0000-000000000001/README.txt"
           },
           {
@@ -2730,8 +2730,8 @@
             "relpath": "bundle/feedface-0001-0000-0000-000000000001/qa_report.json"
           },
           {
-            "digest": "9bc80e4e4195d301e8ee8ac921f296724b02b8861e12139eb5bd2c7ee2cf2dba",
-            "kind": "other",
+            "digest": "c7a0abbb7339b0712048a21f1e0b65783deb8430293481cb973e258cbc579df6",
+            "kind": "text",
             "relpath": "bundle/feedface-0001-0000-0000-000000000002/README.txt"
           },
           {
@@ -2751,7 +2751,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -2781,7 +2781,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "record-summary/_PHI_WARNING_README.txt"
           },
           {
@@ -3549,22 +3549,22 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
             "digest": "8ea0a28fcd51cb4c5fcc0484ff45c11ff4ab0f739d2146e3be273b372ad83464",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/LICENSES/NOTICE.txt"
           },
           {
             "digest": "bbe74c56ed4daa6346737242a01e5a748911821f008f7a8882550128b98d37da",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/README.txt"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/_PHI_WARNING_README.txt"
           },
           {
@@ -3578,7 +3578,7 @@
             "relpath": "arch/assets/anast.css"
           },
           {
-            "digest": "0fd8b288f09a538d9cafb0355d75b25f2473f80a70087e65d2a05cc91803394f",
+            "digest": "6b95f4f9f99265a4067c5cc513903d34cdf32068a0ea92a4fa780c5e7d2902e9",
             "kind": "html",
             "relpath": "arch/index.html"
           },
@@ -3593,17 +3593,17 @@
             "relpath": "arch/patients/900000001/bundle.json"
           },
           {
-            "digest": "b6bb16e88a8874d8384a27bccb9e13b670f33bd3c8c48819e587a9866cdaf47f",
+            "digest": "e5b23edf6fc42efeed03cda2e7e21bc6648041bb1c0fc582719ca4f86beece2c",
             "kind": "html",
             "relpath": "arch/patients/900000001/encounters/900100001.html"
           },
           {
-            "digest": "a82b22f534e75ebf35bf9d12c4875039f932a8f1b840a8f675e204656eebdb9c",
+            "digest": "d1c3205541700e95e6d524dfcbbb5a60059618d07bfd4a63a2ad62ce16d23f0f",
             "kind": "html",
             "relpath": "arch/patients/900000001/encounters/900100002.html"
           },
           {
-            "digest": "97b86faf5fce9bb27e3ce9d07cef8445ad1804557e4d1c32d7088dd5d6439daa",
+            "digest": "fb11ab74de9af82bb7733290b02a1dc055849a06caa480f617fd9190a822aca5",
             "kind": "html",
             "relpath": "arch/patients/900000001/index.html"
           },
@@ -3623,12 +3623,12 @@
             "relpath": "arch/patients/900000002/bundle.json"
           },
           {
-            "digest": "8d37784d02bbad70dc56e77f4faf2e138767a50cc3eda168f414ab358239b558",
+            "digest": "b43e04de9917802d6caff17b3a438f292d070b83c9e8737831e5383c992a98cb",
             "kind": "html",
             "relpath": "arch/patients/900000002/encounters/900100003.html"
           },
           {
-            "digest": "b0f45af16d640a22ea2357ce8286ec5accd047100062e81ab9787cfc95d5843c",
+            "digest": "4fb8e350e337b241c3bd4680199da85aa0af98aab65529b0765287490e303bf1",
             "kind": "html",
             "relpath": "arch/patients/900000002/index.html"
           },
@@ -3638,8 +3638,8 @@
             "relpath": "arch/patients/900000002/pdfs/Sampleson_Beta_Unknown_03-20-2024.pdf"
           },
           {
-            "digest": "6922ff3e569008611f6e5abdf82ba0ab3ca02f170029962999a6ae6c51d9c6d4",
-            "kind": "other",
+            "digest": "c9a32207e0ad8d0fa71ba502649b4c95e1a0f336b41ab0f2d0b39ea4621e20a3",
+            "kind": "text",
             "relpath": "bundle/900000001/README.txt"
           },
           {
@@ -3663,8 +3663,8 @@
             "relpath": "bundle/900000001/qa_report.json"
           },
           {
-            "digest": "7ea6e0de6f987a647c70dab20be29fae84d695bbd2d1237ae872043cd84096a9",
-            "kind": "other",
+            "digest": "e73d60cf95c159d49c6f29989d6240ec38ae6c318c8a0387468f060afe3234b2",
+            "kind": "text",
             "relpath": "bundle/900000002/README.txt"
           },
           {
@@ -3684,7 +3684,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
@@ -3699,7 +3699,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -3719,7 +3719,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "record-summary/_PHI_WARNING_README.txt"
           },
           {
@@ -4524,22 +4524,22 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
             "digest": "8ea0a28fcd51cb4c5fcc0484ff45c11ff4ab0f739d2146e3be273b372ad83464",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/LICENSES/NOTICE.txt"
           },
           {
             "digest": "bbe74c56ed4daa6346737242a01e5a748911821f008f7a8882550128b98d37da",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/README.txt"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/_PHI_WARNING_README.txt"
           },
           {
@@ -4553,7 +4553,7 @@
             "relpath": "arch/assets/anast.css"
           },
           {
-            "digest": "c332426a02abdb960143cd132f16b1512f3bde0e7e7fc9a1e4a49692973d3ffb",
+            "digest": "85d138ca95dc1ec80291f6a543de222bf98212034fb873f9e9ffef391d1792dd",
             "kind": "html",
             "relpath": "arch/index.html"
           },
@@ -4573,22 +4573,22 @@
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/bundle.json"
           },
           {
-            "digest": "8951acbab4e570698d76984d8d39117caec2bec53115f35da6780d56143a17c4",
+            "digest": "c3dc7f1334396ca907883cdb3c45c7f28815fde31eab3ba8a53f963f3234308d",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/encounters/feedface-e000-0000-0000-000000000001.html"
           },
           {
-            "digest": "066cfd9b3da03105d21ffdde7f51a6a68b6793b0b929a6e4464c04b183d19d6c",
+            "digest": "a2fa40719b16a54141ebaff4eb8377d669200b42bda8a203ab31aa872cf71dea",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/encounters/feedface-e000-0000-0000-000000000002.html"
           },
           {
-            "digest": "342083ce2af4d5194d3e316a30d7c6bedf1b9a4ce826fa3d70216c8925af81ed",
+            "digest": "694b078d3c4213362da7e1eae3ee1da00d21df65c527f0115332ba52d3263a76",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/encounters/feedface-e000-0000-0000-000000000003.html"
           },
           {
-            "digest": "40c51c702428b52f9e521e90806c28a854b01c56f7442cf0abb57938df6bfb85",
+            "digest": "acc151f27a053384284d14c064ce87d244822311dc8732ec45b33f20a51f4e1b",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/index.html"
           },
@@ -4613,17 +4613,17 @@
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/bundle.json"
           },
           {
-            "digest": "a79cf5b3a97f76a6669f5fc33181390f82877f04c7b4d94110eccfff2a7f6316",
+            "digest": "c43339679a764f767628c94bbec39100cd45450374e5cc3da841e747f8e0b902",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/encounters/feedface-e000-0000-0000-000000000004.html"
           },
           {
-            "digest": "cf3c9c79dfbf54223c6110381faedf7014b9de4948e240cd00d63d438b720bc8",
+            "digest": "e50d920b8e6820c9471a7ebf9b9105d2e69cbc64bfdd62e37d51f56f4bb7171a",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/encounters/feedface-e000-0000-0000-000000000005.html"
           },
           {
-            "digest": "a2edd06982708057b4739829b30f0678ba964dbcafc0ee77dd5b14214c6539f6",
+            "digest": "e32b7b2d9e6e31aee4174b474a4b88b1fc408a1fe39a6ee755befe1141194e06",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/index.html"
           },
@@ -4643,12 +4643,12 @@
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000003/bundle.json"
           },
           {
-            "digest": "5bea43b5be54e5137ba4005b5e17b78a9a9638006655b6867f01c98db2552d42",
+            "digest": "7652d1ff6399b84ac5a32e0c9c37c106cece5e57273447c52f25052fc1499fd0",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000003/encounters/feedface-e000-0000-0000-000000000006.html"
           },
           {
-            "digest": "fa63f19376d18f073bc69200eef1d9b18b54507ad243b83de2e08b806276ef24",
+            "digest": "8c99a5367f6eb9cf0f1c4f995c1bb4cf5759680a24c0e1faeacd5f643656cd98",
             "kind": "html",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000003/index.html"
           },
@@ -4659,7 +4659,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "attachments/_PHI_WARNING_README.txt"
           },
           {
@@ -4669,12 +4669,12 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "a81fcd108d844f18b5a279b9a88a2858b49950223ed5f11eb78f636a65cf4cc3",
-            "kind": "other",
+            "digest": "bd6c3c06c1ce567852ed36e254477bf4def4dd4aba2f4723e64c62bed49fb181",
+            "kind": "text",
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/README.txt"
           },
           {
@@ -4708,8 +4708,8 @@
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/qa_report.json"
           },
           {
-            "digest": "983c35807d8de1a87bf743d16f8086e8701860b3d45e168522469b79e8d35996",
-            "kind": "other",
+            "digest": "b0b93c2441538f27bdc724d077df135958ff6e270aa47e0fb6b69786e5be9367",
+            "kind": "text",
             "relpath": "bundle/feedface-0000-0000-0000-000000000002/README.txt"
           },
           {
@@ -4733,8 +4733,8 @@
             "relpath": "bundle/feedface-0000-0000-0000-000000000002/qa_report.json"
           },
           {
-            "digest": "7dd77d51150297ab82ea892f6fff2528c3c05b16e9d556d9c858b47cd1050c4a",
-            "kind": "other",
+            "digest": "b18921ce66e45d2af8e6f3284ddee18ed2f1c9657dacf8c0974b106ea327202d",
+            "kind": "text",
             "relpath": "bundle/feedface-0000-0000-0000-000000000003/README.txt"
           },
           {
@@ -4754,7 +4754,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -4799,7 +4799,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "record-summary/_PHI_WARNING_README.txt"
           },
           {
@@ -6061,7 +6061,7 @@
         "files": [
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
@@ -6071,7 +6071,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -6081,7 +6081,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "charts/_PHI_WARNING_README.txt"
           },
           {
@@ -6686,22 +6686,22 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
             "digest": "8ea0a28fcd51cb4c5fcc0484ff45c11ff4ab0f739d2146e3be273b372ad83464",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/LICENSES/NOTICE.txt"
           },
           {
             "digest": "bbe74c56ed4daa6346737242a01e5a748911821f008f7a8882550128b98d37da",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/README.txt"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "arch/_PHI_WARNING_README.txt"
           },
           {
@@ -6715,7 +6715,7 @@
             "relpath": "arch/assets/anast.css"
           },
           {
-            "digest": "99b4a78e5c8555667c807fa0fb10adefff30b523dfe94178c5d216d3b8fd3170",
+            "digest": "da2bc67e0ee8393973419cf4541e90cf4baab45b72b454f69bd499c58d45b01d",
             "kind": "html",
             "relpath": "arch/index.html"
           },
@@ -6730,12 +6730,12 @@
             "relpath": "arch/patients/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/bundle.json"
           },
           {
-            "digest": "5d837e0158ffb5b77c6cd54d2bf3b0c20f9df4cd9800566dd5ee2117c8c2499c",
+            "digest": "85c00430cbde690ac1d4387467fd0c163a4c335db5648b0ea5440095a2709645",
             "kind": "html",
             "relpath": "arch/patients/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/encounters/3da68fbe-0b08-2747-7102-fa7f2e8464b0.html"
           },
           {
-            "digest": "9044c2851e2e0e744c741948679de4ce6d802840954ae3680a0e5bcea433de13",
+            "digest": "32287b473209f0a3487599a3ed35fd297570498bd9a51b473e6cfba2337baa58",
             "kind": "html",
             "relpath": "arch/patients/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/index.html"
           },
@@ -6745,8 +6745,8 @@
             "relpath": "arch/patients/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/pdfs/Gislason620_Darryl392_04-26-2026.pdf"
           },
           {
-            "digest": "0fc55906566ac63d2fef831650f9f546832d9e9a6bc52c14290b25bf4c1f65a1",
-            "kind": "other",
+            "digest": "aabddc058aa2030d07c81cd828e6b74fcc8b49b38b858a40dc05c276c20d45b9",
+            "kind": "text",
             "relpath": "bundle/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/README.txt"
           },
           {
@@ -6766,7 +6766,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
@@ -6776,7 +6776,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
@@ -6796,7 +6796,7 @@
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
-            "kind": "other",
+            "kind": "text",
             "relpath": "record-summary/_PHI_WARNING_README.txt"
           },
           {
