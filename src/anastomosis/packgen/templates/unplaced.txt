@@ -1,0 +1,15 @@
+UNPLACED STATIC TEXT
+====================
+
+These are raw strings retained from your samples, including static text
+and inferred heading candidates. The generator does not reproduce them
+in the working pack files.
+${ocr_note}
+${note}
+
+Move what belongs to the form into template.html, then delete this
+file. It is the only file in this pack carrying text taken from your
+samples, so deleting it is the whole job.
+
+--------------------------------------------------------------------
+${body}

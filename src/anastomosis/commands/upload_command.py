@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from anastomosis.commands.runmanifest import RunManifest
+    from anastomosis.deliver.browser.manager import ManagedDestination
+    from anastomosis.deliver.browser.persist import UploadManifest
+    from anastomosis.deliver.browser.tracking import TrackingDB
+    from anastomosis.deliver.verify import LayeredVerifier
     from anastomosis.reconstruct.packs import LoadedPack
 
 logger = logging.getLogger(__name__)
@@ -248,6 +252,79 @@ def _verification_pack(name: str | None) -> LoadedPack | None:
     return status.pack
 
 
+def _wire_run_resources(
+    stack: ExitStack,
+    attach: Callable[[], object],
+    manifest: UploadManifest,
+    ledger_path: Path,
+    *,
+    verify: bool,
+) -> tuple[ManagedDestination, TrackingDB, LayeredVerifier | None]:
+    """Contract: attach the destination and take ownership of every resource
+    the run needs, registering each with ``stack`` the instant we own it, so
+    a failure constructing a later one cannot leak an earlier one."""
+    from anastomosis.deliver.browser.manager import ManagedDestination
+    from anastomosis.deliver.browser.tracking import TrackingDB
+    from anastomosis.destinations.base import Destination
+
+    destination = attach()
+    assert isinstance(destination, Destination)  # the seam must honor the protocol
+    # Register each resource with the ExitStack the INSTANT we own it, so a
+    # failure while constructing a LATER resource (the TrackingDB below, or
+    # the LayeredVerifier) cannot leak the one we already hold. Release the
+    # destination's owned Playwright driver + CDP connection via its one-shot
+    # release() (NOT close(), the manager's per-recycle hook): release()
+    # disconnects the CDP session and stops the driver; per Playwright that
+    # does NOT close a connect_over_cdp browser, so the operator's EHR browser
+    # stays open. Duck-typed so a destination with no owned resources (the
+    # test FakeDestination, the FHIR pusher) has no release() and is skipped.
+    release = getattr(destination, "release", None)
+    if callable(release):
+        stack.callback(release)
+    managed = ManagedDestination(destination)
+    # Our own ledger handle — registered right after construction so it is
+    # closed on every exit path (success, engine failure, or a verifier
+    # construction failure below). The stack unwinds LIFO, so registering
+    # release() first then tracking.close() second means, on exit,
+    # tracking.close() runs, then release(), then the output locks LAST.
+    tracking = TrackingDB(ledger_path)
+    stack.callback(tracking.close)
+    # Opt-in L0-L6 ladder. The LayeredVerifier import (and thus PyMuPDF) is
+    # lazy so verify=False never pulls in the render extra. The verifier
+    # reads the destination directly for its banner/metadata/round-trip
+    # access (L4/L5/L6) — so it takes the UNwrapped Destination, while the
+    # engine takes the ManagedDestination.
+    #
+    # The whole ladder runs here, against what the render run itself recorded
+    # in the manifest: `pack` is the template pack whose declared header
+    # fields L3 checks, `records` are the DOS-only encounters L3's `dos`
+    # field reads, and `expected_pages` is each PDF's page count as rendered,
+    # which turns L1's ">= 1 page" into "exactly N pages". Whatever the
+    # manifest could not supply degrades to a SKIP that names its reason in
+    # the run report (and, for a pre-v2 manifest or an unavailable pack, a
+    # warning in the log) — never to a level that passes without checking.
+    #
+    # `verify_policies` says which items are the SOURCE's own documents
+    # rather than charts this toolkit printed: the page-one text levels
+    # cannot read a scan and skip, naming that reason in the report. A
+    # pre-v4 manifest carries none, and every one of its items is a chart.
+    #
+    # If this constructor raises, the stack already owns both the
+    # destination release and the ledger close, so neither leaks.
+    verifier = None
+    if verify:
+        from anastomosis.deliver.verify import LayeredVerifier
+
+        verifier = LayeredVerifier(
+            destination=destination,
+            pack=_verification_pack(manifest.pack),
+            records=manifest.encounters,
+            expected_pages=manifest.expected_pages,
+            verify_policies=manifest.verify_policies,
+        )
+    return managed, tracking, verifier
+
+
 def run_upload_command(
     cmd: UploadCommand,
     attach: Callable[[], object],
@@ -263,11 +340,8 @@ def run_upload_command(
     from anastomosis.core.output import secure_output_dir
     from anastomosis.deliver.browser.engine import UploadEngine
     from anastomosis.deliver.browser.gates import assert_deliverable
-    from anastomosis.deliver.browser.manager import ManagedDestination
     from anastomosis.deliver.browser.persist import load_upload_manifest
     from anastomosis.deliver.browser.reports import write_run_report
-    from anastomosis.deliver.browser.tracking import TrackingDB
-    from anastomosis.destinations.base import Destination
 
     # Fail closed BEFORE touching the browser: if verification is on but the
     # dependency that reads the PDFs is missing, refuse rather than file unverified.
@@ -309,61 +383,9 @@ def run_upload_command(
         # profile moved. Either way, nothing is filed and reconciled after.
         assert_deliverable(manifest)
         check_run_binding(cmd.out_dir)
-        destination = attach()
-        assert isinstance(destination, Destination)  # the seam must honor the protocol
-        # Register each resource with the ExitStack the INSTANT we own it, so a
-        # failure while constructing a LATER resource (the TrackingDB below, or
-        # the LayeredVerifier) cannot leak the one we already hold. Release the
-        # destination's owned Playwright driver + CDP connection via its one-shot
-        # release() (NOT close(), the manager's per-recycle hook): release()
-        # disconnects the CDP session and stops the driver; per Playwright that
-        # does NOT close a connect_over_cdp browser, so the operator's EHR browser
-        # stays open. Duck-typed so a destination with no owned resources (the
-        # test FakeDestination, the FHIR pusher) has no release() and is skipped.
-        release = getattr(destination, "release", None)
-        if callable(release):
-            stack.callback(release)
-        managed = ManagedDestination(destination)
-        # Our own ledger handle — registered right after construction so it is
-        # closed on every exit path (success, engine failure, or a verifier
-        # construction failure below). The stack unwinds LIFO, so registering
-        # release() first then tracking.close() second means, on exit,
-        # tracking.close() runs, then release(), then the output locks LAST.
-        tracking = TrackingDB(cmd.out_dir / LEDGER_NAME)
-        stack.callback(tracking.close)
-        # Opt-in L0-L6 ladder. The LayeredVerifier import (and thus PyMuPDF) is
-        # lazy so verify=False never pulls in the render extra. The verifier
-        # reads the destination directly for its banner/metadata/round-trip
-        # access (L4/L5/L6) — so it takes the UNwrapped Destination, while the
-        # engine takes the ManagedDestination.
-        #
-        # The whole ladder runs here, against what the render run itself recorded
-        # in the manifest: `pack` is the template pack whose declared header
-        # fields L3 checks, `records` are the DOS-only encounters L3's `dos`
-        # field reads, and `expected_pages` is each PDF's page count as rendered,
-        # which turns L1's ">= 1 page" into "exactly N pages". Whatever the
-        # manifest could not supply degrades to a SKIP that names its reason in
-        # the run report (and, for a pre-v2 manifest or an unavailable pack, a
-        # warning in the log) — never to a level that passes without checking.
-        #
-        # `verify_policies` says which items are the SOURCE's own documents
-        # rather than charts this toolkit printed: the page-one text levels
-        # cannot read a scan and skip, naming that reason in the report. A
-        # pre-v4 manifest carries none, and every one of its items is a chart.
-        #
-        # If this constructor raises, the stack already owns both the
-        # destination release and the ledger close, so neither leaks.
-        verifier = None
-        if cmd.verify:
-            from anastomosis.deliver.verify import LayeredVerifier
-
-            verifier = LayeredVerifier(
-                destination=destination,
-                pack=_verification_pack(manifest.pack),
-                records=manifest.encounters,
-                expected_pages=manifest.expected_pages,
-                verify_policies=manifest.verify_policies,
-            )
+        managed, tracking, verifier = _wire_run_resources(
+            stack, attach, manifest, cmd.out_dir / LEDGER_NAME, verify=cmd.verify
+        )
         run_id = tracking.begin_run(managed.name)
         # The engine contract: the CALLER recovers any mid-flight items from a
         # prior killed run before driving (a re-start resumes cleanly).

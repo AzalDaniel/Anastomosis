@@ -1,8 +1,8 @@
 """The pack-from-samples wizard backend (the packgen console).
 
-A thin adapter over the shared :func:`anastomosis.commands.packinit.run_pack_init`
-core — the analyze -> confirm -> emit flow the CLI's ``anast pack init`` runs —
-offered both synchronously (:meth:`PackgenConsole.pack_init`) and as a
+A thin adapter over the shared :func:`anastomosis.commands.learn.run_learn`
+capability — the analyze -> confirm -> emit flow the CLI's ``anast pack init``
+runs — offered both synchronously (:meth:`PackgenConsole.pack_init`) and as a
 busy-guarded daemon job (:meth:`PackgenConsole.pack_init_async`). Every method
 keeps the controller's contract: JSON-safe dict, never raise, PHI-safe events
 (static template text + counts only, never a sample path or a cell value).
@@ -16,7 +16,7 @@ from anastomosis.gui.consoles.wizard import WizardConsole
 from anastomosis.gui.events import error_event
 
 if TYPE_CHECKING:
-    from anastomosis.commands.packinit import PackInitResult
+    from anastomosis.commands.learn import LearnResult
 
 __all__ = ["PackgenConsole"]
 
@@ -39,14 +39,15 @@ class PackgenConsole(WizardConsole):
     ) -> dict[str, object]:
         """Learn a DRAFT template pack from sample PDFs (the wizard's backend).
 
-        Adapter over :func:`run_pack_init` (28); confirmed emits the draft,
+        Adapter over :func:`run_learn` (28); confirmed emits the draft,
         else refuses ``ConfirmationRequired``. ``out_dir=None`` uses the per-user dir (36)."""
         try:
-            from anastomosis.commands.packinit import PackInitCommand, run_pack_init
+            from anastomosis.commands.learn import LearnCommand, run_learn
             from anastomosis.core.output import typed_path
 
-            result = run_pack_init(
-                PackInitCommand(
+            result = run_learn(
+                LearnCommand(
+                    kind="layout",
                     samples=[samples_dir],
                     name=name,
                     display=display,
@@ -59,9 +60,9 @@ class PackgenConsole(WizardConsole):
             return self._fail("pack_init", exc)
 
     def _pack_init_result_dict(
-        self, result: PackInitResult, *, emit_failure: bool = True
+        self, result: LearnResult, *, emit_failure: bool = True
     ) -> dict[str, object]:
-        """Map a :class:`PackInitResult` to the wizard's JSON-safe dict.
+        """Map a :class:`LearnResult` to the wizard's JSON-safe dict.
 
         Shared by the sync and async paths. ``emit_failure=False`` (async)
         skips the sync path's own error event, avoiding a double emission.
@@ -82,10 +83,10 @@ class PackgenConsole(WizardConsole):
                 "ok": True,
                 # The identity Charts/Migrate will offer, and the exact dir+hash
                 # a later run binds to; named, since that's what's picked next.
-                "pack": result.pack_name,
-                "pack_dir": str(result.pack_dir),
+                "pack": result.learned_name,
+                "pack_dir": str(result.written_dir),
                 "content_hash": result.content_hash,
-                "draft_md": result.draft_md,
+                "draft_md": result.review_md,
                 "summary": result.summary,
                 "sample_count": result.sample_count,
                 "low_confidence": result.low_confidence,
@@ -113,12 +114,13 @@ class PackgenConsole(WizardConsole):
         """
 
         def _run() -> dict[str, object]:
-            from anastomosis.commands.packinit import PackInitCommand, run_pack_init
+            from anastomosis.commands.learn import LearnCommand, run_learn
             from anastomosis.core.output import typed_path
 
             return self._pack_init_result_dict(
-                run_pack_init(
-                    PackInitCommand(
+                run_learn(
+                    LearnCommand(
+                        kind="layout",
                         samples=[samples_dir],
                         name=name,
                         display=display,

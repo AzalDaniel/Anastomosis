@@ -542,9 +542,9 @@ def test_migrate_ccda_standard_runs_qa_and_writes_report(
     # ones RAN, the encounter-scoped ones are recorded as skipped WITH A REASON,
     # and none is silently omitted. Derived from the registry, not listed
     # literally, so a newly registered check cannot go unmentioned unnoticed.
-    from anastomosis.qa.base import engine_checks
+    from anastomosis.qa.checks import ENGINE_CHECKS
 
-    registered = {check.name for check in engine_checks()}
+    registered = {check.name for check in ENGINE_CHECKS}
     for doc in report["documents"]:
         by_check = {c["check"]: c for c in doc["checks"]}
         assert set(by_check) == registered

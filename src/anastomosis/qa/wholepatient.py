@@ -1,14 +1,12 @@
 """QA for a document that stands for the whole record, not one visit.
 
 The C-CDA migration's HL7 stylesheet page and the pack-mode record summary
-are the same kind of document and are graded the same way: only
-:data:`DOC_GENERIC_CHECKS` apply, and the rest are recorded as skipped with
-a reason (:data:`ENCOUNTER_SCOPED_SKIPS`), never silently omitted.
-``carries`` is every :data:`~anastomosis.core.model.CHARTABLE_KINDS` kind, so
-a fact family missing from the page is a defect, not a layout choice. The
-two tables together must name every registered check
-(``test_the_whole_patient_report_names_every_check_the_neutral_path_does``).
-Findings may quote chart values; nothing here logs."""
+are the same kind of document and are graded the same way:
+:data:`WHOLE_PATIENT_SCOPE` says, per engine check, whether it runs here or
+is recorded as skipped with a reason — never silently omitted. ``carries``
+is every :data:`~anastomosis.core.model.CHARTABLE_KINDS` kind, so a fact
+family missing from the page is a defect, not a layout choice. Findings may
+quote chart values; nothing here logs."""
 
 from __future__ import annotations
 
@@ -23,31 +21,25 @@ if TYPE_CHECKING:
     from .runner import QAReport
 
 __all__ = [
-    "DOC_GENERIC_CHECKS",
-    "ENCOUNTER_SCOPED_SKIPS",
     "WHOLE_PATIENT_CARRIES",
     "WHOLE_PATIENT_PAGE_SIZE",
+    "WHOLE_PATIENT_SCOPE",
     "whole_patient_batch",
     "whole_patient_report",
 ]
 
-#: The engine checks a whole-patient document can actually answer.
-#:
-#: ``unattributed_vitals`` never reads ``ctx.encounter``, only the record's
-#: own observations, so it applies here too — and for this population
-#: ``ctx.record_summary_path`` IS the document being graded. ``record_coverage``,
-#: paired with ``carries`` below, is what can FAIL this document.
-DOC_GENERIC_CHECKS: tuple[str, ...] = (
-    "data_integrity",
-    "layout_pagination",
-    "record_coverage",
-    "unattributed_vitals",
-)
-
-#: The encounter-scoped engine checks, recorded as skipped WITH A REASON (not
-#: omitted). A skip is ``Verdict.PASS`` + a ``skipped: ...`` finding — the same
-#: idiom ``VitalsLoincCheck`` uses when its section is disabled.
-ENCOUNTER_SCOPED_SKIPS: dict[str, str] = {
+#: Every engine check, and what a whole-patient document can honestly answer
+#: about it: ``None`` runs it, a reason records it ``Verdict.PASS`` plus that
+#: ``skipped: ...`` finding — the idiom ``VitalsLoincCheck`` uses for a section
+#: its flags switched off. ``unattributed_vitals`` runs because it reads the
+#: record's own observations, never ``ctx.encounter``, and for this population
+#: the graded page IS ``ctx.record_summary_path``. ``record_coverage``, paired
+#: with ``carries`` below, is what can FAIL this document.
+WHOLE_PATIENT_SCOPE: dict[str, str | None] = {
+    "data_integrity": None,
+    "layout_pagination": None,
+    "record_coverage": None,
+    "unattributed_vitals": None,
     "vitals_loinc": (
         "skipped: vitals are encounter-scoped; this is a whole-patient document "
         "with no single-encounter vitals context"
@@ -112,11 +104,11 @@ def whole_patient_report(documents: Iterable[tuple[Path, PatientRecord]]) -> QAR
     per-encounter report). ``documents`` is materialized because it also
     builds the patient-id -> path map ``unattributed_vitals`` reads: for
     this population the graded document IS the record summary."""
-    from .base import CheckResult, Verdict, engine_checks
+    from .base import CheckResult, Verdict
+    from .checks import ENGINE_CHECKS
     from .runner import run_qa
 
     docs = list(documents)
-    by_name = {check.name: check for check in engine_checks()}
     # Keyed by patient id, not the record object, so it still agrees with
     # `run_qa`'s lookup after `_anchor_record` copies the record.
     summary_paths = {record.patient.id: path for path, record in docs}
@@ -125,10 +117,14 @@ def whole_patient_report(documents: Iterable[tuple[Path, PatientRecord]]) -> QAR
         section_flags={},
         page_size=WHOLE_PATIENT_PAGE_SIZE,
         carries=WHOLE_PATIENT_CARRIES,
-        checks=[by_name[name] for name in DOC_GENERIC_CHECKS],
+        # KeyError, never a silent omission, for a check the table has not placed.
+        checks=[check for check in ENGINE_CHECKS if WHOLE_PATIENT_SCOPE[check.name] is None],
         record_summary_paths=summary_paths,
     )
     for doc_qa in report.documents:
-        for name, reason in ENCOUNTER_SCOPED_SKIPS.items():
-            doc_qa.results.append(CheckResult(name, Verdict.PASS, [reason]))
+        doc_qa.results.extend(
+            CheckResult(name, Verdict.PASS, [reason])
+            for name, reason in WHOLE_PATIENT_SCOPE.items()
+            if reason is not None
+        )
     return report

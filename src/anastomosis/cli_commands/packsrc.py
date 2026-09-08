@@ -1,11 +1,10 @@
 """``anast pack init`` / ``anast source init`` — the two learn-from-example wizards.
 
 See :mod:`anastomosis.cli_commands` for the split/registration rationale. Both
-commands are thin adapters over their shared command cores
-(:mod:`anastomosis.commands.packinit`, :mod:`anastomosis.commands.source_init_command`) so
-the CLI and the GUI run ONE flow; this module keeps only the CLI's Rich UX (the
-count line, the low-confidence warning, the same-patient confirm, the next-steps
-block).
+are thin adapters over the one learn capability
+(:mod:`anastomosis.commands.learn`), so the CLI and the GUI run ONE flow; this
+module keeps only the CLI's Rich UX (the count line, the low-confidence
+warning, the same-patient confirm, the next-steps block).
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from anastomosis.cli_commands._paths import out_dir
 from anastomosis.core.outcome import declined
 
 if TYPE_CHECKING:
-    from anastomosis.commands.source_init_command import SourceInitResult
+    from anastomosis.commands.learn import LearnResult
     from anastomosis.core.model import PatientRecord
 
 
@@ -132,10 +131,10 @@ def _render_preview(pack_dir: Path) -> Path | None:
     """
     from anastomosis import cli as _cli
     from anastomosis.reconstruct import discover_packs
-    from anastomosis.reconstruct.engine import ReconstructionEngine
+    from anastomosis.reconstruct.engine import build_render_engine
 
     try:
-        from anastomosis.reconstruct.chromium import ChromiumRenderer
+        from anastomosis.reconstruct.chromium import ChromiumRenderer  # noqa: F401 (probe)
     except ImportError:
         _cli.console.print(
             "[yellow]preview skipped[/yellow]: install anastomosis[render] for Chromium"
@@ -158,17 +157,7 @@ def _render_preview(pack_dir: Path) -> Path | None:
         diagnosis = status.diagnosis if status else "draft pack not discovered"
         _cli.console.print(f"[red]preview failed:[/red] {diagnosis}")
         raise typer.Exit(code=1)
-    manifest = status.pack.manifest
-    margins = {
-        "top": manifest.page.margin_top,
-        "right": manifest.page.margin_right,
-        "bottom": manifest.page.margin_bottom,
-        "left": manifest.page.margin_left,
-    }
-    engine = ReconstructionEngine(
-        status.pack,
-        lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
-    )
+    engine = build_render_engine(status.pack)
     preview_dir = pack_dir / "preview"
     result = engine.run([_synthetic_preview_record()], preview_dir)
     if result.failed or not result.documents:
@@ -351,19 +340,16 @@ def pack_init(
     context.py un-trusts it until it is confirmed again.
     """
     from anastomosis import cli as _cli
-    from anastomosis.commands.packinit import (
-        LOW_SAMPLE_FLOOR,
-        PackInitCommand,
-        run_pack_init,
-    )
+    from anastomosis.commands.learn import LOW_SAMPLE_FLOOR, LearnCommand, run_learn
 
     # Analyze step (confirmed=False): validate the name, collect + harvest the
     # samples, and produce the summary — not "the PHI-safe summary", which is
     # what this said and what the print below stopped calling it. The shared
     # core does the work; this command presents it and runs the interactive
     # confirm.
-    analysis_result = run_pack_init(
-        PackInitCommand(
+    analysis_result = run_learn(
+        LearnCommand(
+            kind="layout",
             samples=samples,
             name=name,
             display=display,
@@ -414,8 +400,9 @@ def pack_init(
         raise typer.Exit(code=0)
 
     # Emit step (confirmed=True): the shared core writes the draft pack.
-    emit_result = run_pack_init(
-        PackInitCommand(
+    emit_result = run_learn(
+        LearnCommand(
+            kind="layout",
             samples=samples,
             name=name,
             display=display,
@@ -427,8 +414,8 @@ def pack_init(
     if not emit_result.ok:
         _cli.console.print(f"[red]emit failed[/red] ({emit_result.error})")
         raise typer.Exit(code=1) from None
-    pack_dir = emit_result.pack_dir
-    assert pack_dir is not None  # ok=True guarantees a pack_dir
+    pack_dir = emit_result.written_dir
+    assert pack_dir is not None  # ok=True guarantees a written_dir
     _cli.console.print(f"\n[green]wrote draft pack[/green] {_cli._glyphs().arrow} {pack_dir}")
     _note_ocr_evidence(pack_dir)
 
@@ -441,9 +428,7 @@ def pack_init(
     _print_pack_next_steps(name, pack_dir, out_dir, preview_path)
 
 
-def _refuse_analysis(
-    analysis: SourceInitResult, *, name: str, example: Path, to: str | None
-) -> None:
+def _refuse_analysis(analysis: LearnResult, *, name: str, example: Path, to: str | None) -> None:
     """Present the analyze step's refusals and exit; return only on the checkpoint.
 
     Every pre-confirm outcome except ``ConfirmationRequired`` is a refusal with
@@ -539,12 +524,13 @@ def source_init(
     else refuses instead of mapping one system's columns into another.
     """
     from anastomosis import cli as _cli
-    from anastomosis.commands.source_init_command import SourceInitCommand, run_source_init_command
+    from anastomosis.commands.learn import LearnCommand, run_learn
 
     # Analyze step (confirmed=False), via the SHARED core the GUI source wizard
     # also runs; this command only presents the proposal and confirms it.
-    analysis = run_source_init_command(
-        SourceInitCommand(
+    analysis = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=example,
             name=name,
             display=display,
@@ -572,8 +558,9 @@ def source_init(
 
     # Save step (confirmed=True): build the mapping, prove it drops no column via
     # a round-trip, and save it owner-only — all in the shared core.
-    saved = run_source_init_command(
-        SourceInitCommand(
+    saved = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=example,
             name=name,
             display=display,
@@ -602,13 +589,13 @@ def source_init(
         _cli.console.print(f"[red]could not save the mapping[/red] ({saved.error})")
         raise typer.Exit(code=1)
 
-    assert saved.mapping_dir is not None  # ok=True guarantees a mapping_dir
+    assert saved.written_dir is not None  # ok=True guarantees a written_dir
     _cli.console.print(
-        f"\n[green]learned source[/green] {name!r} {_cli._glyphs().arrow} {saved.mapping_dir} "
+        f"\n[green]learned source[/green] {name!r} {_cli._glyphs().arrow} {saved.written_dir} "
         f"({saved.record_count} record(s) round-tripped)"
     )
     _cli.console.print(
-        f"  Review {saved.mapping_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
+        f"  Review {saved.written_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
     )
     if saved.destination is not None:
         _cli.console.print(
@@ -619,7 +606,7 @@ def source_init(
     # `pipeline run` has no `--source-dir` for a custom `--out-dir`.
     from anastomosis.sources.learned import user_sources_dir
 
-    if saved.mapping_dir.parent == user_sources_dir():
+    if saved.written_dir.parent == user_sources_dir():
         _cli.console.print(f"  Run it:  anast pipeline run <export-dir> --source {name} -o out")
     else:
         _cli.console.print(

@@ -93,22 +93,36 @@ def test_browser_attach_module_loads_without_playwright_extra() -> None:
     assert "playwright.sync_api" not in loaded
 
 
-def test_cli_make_destination_delegates_to_attach_destination() -> None:
-    """A thin lazy-import wrapper that delegates straight to
-    :func:`attach_destination`. A module-level assignment instead would make
-    importing the CLI load the whole upload engine."""
-    from unittest.mock import patch
+#: The two frontend modules that attach a live browser destination. Neither
+#: may own a copy of the flow, and neither may import it at module load.
+_ATTACH_CALLERS = ("cli_commands/upload.py", "gui/consoles/upload.py")
 
-    from anastomosis.cli import _make_destination
 
-    sentinel = object()
-    with patch(
-        "anastomosis.deliver.browser.attach.attach_destination", return_value=sentinel
-    ) as mock_attach:
-        result = _make_destination("http://127.0.0.1:9222", "loaded")
-
-    mock_attach.assert_called_once_with("http://127.0.0.1:9222", "loaded")
-    assert result is sentinel
+def test_both_frontends_attach_through_the_one_seam() -> None:
+    """Rule 107 and 75 together: the CLI and the GUI name
+    :func:`attach_destination` from inside a function body, so one seam owns
+    the CDP flow and importing either frontend still leaves the upload engine
+    unloaded."""
+    root = Path(__file__).resolve().parents[2] / "src" / "anastomosis"
+    for relpath in _ATTACH_CALLERS:
+        path = root / relpath
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module_level = {
+            node.module for node in tree.body if isinstance(node, ast.ImportFrom) and node.module
+        }
+        assert "anastomosis.deliver.browser.attach" not in module_level, (
+            f"{relpath} imports the attach seam at module load; keep it inside the "
+            "function so the upload engine stays unloaded."
+        )
+        named = {
+            node.attr if isinstance(node, ast.Attribute) else node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute | ast.Name)
+        }
+        assert "attach_destination" in named, (
+            f"{relpath} no longer calls attach_destination: a second copy of the "
+            "CDP-attach flow is a defect, not a style choice."
+        )
 
 
 # --- public verification imports (circular-import regression) --------------
@@ -237,4 +251,44 @@ def test_core_imports_nothing_outward() -> None:
         "core/ imports outside anastomosis.core (rule 76): "
         + "; ".join(offenders)
         + ". The command layer lives in commands/, not in the primitives package."
+    )
+
+
+# --- the import graph: no package re-exports (rule 75) ---------------------
+#
+# Both package inits are docstring markers, so one submodule costs one.
+# `verify.composite` is absent below: `.persist` needs `VerifyPolicy`, and
+# reaching `verify.types` runs an init with six `LayeredVerifier` callers.
+
+#: Module `.persist` must not load -> the import that would re-introduce it.
+_PERSIST_MUST_NOT_LOAD = {
+    "sqlite3": "anastomosis.deliver.browser.tracking, the ledger",
+    "anastomosis.deliver.browser.engine": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.deliver.browser.tracking": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.deliver.browser.cdp": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.destinations.browserpack": "a re-export in destinations/__init__.py",
+}
+
+
+def test_manifest_writer_does_not_load_the_upload_engine() -> None:
+    """Importing the manifest writer loads no SQLite ledger, upload engine, CDP
+    client or pack adapter: one re-export in either init puts them all back."""
+    loaded = _modules_after_import("anastomosis.deliver.browser.persist")
+    leaked = sorted(set(_PERSIST_MUST_NOT_LOAD) & loaded)
+    assert not leaked, (
+        "importing the manifest writer loaded "
+        + "; ".join(f"{name}, re-introduced by {_PERSIST_MUST_NOT_LOAD[name]}" for name in leaked)
+        + ". Import each name from the module that defines it (rule 75)."
+    )
+
+
+def test_verification_ladder_does_not_load_the_sqlite_ledger() -> None:
+    """The ladder verifies bytes, the ledger records upload progress: importing
+    the ladder reaches ``browser.errors`` only, not the package behind it."""
+    loaded = _modules_after_import("anastomosis.deliver.verify")
+    assert "sqlite3" not in loaded, (
+        "importing the verification ladder loaded sqlite3, re-introduced by "
+        "anastomosis.deliver.browser.tracking — the ladder imports "
+        "browser.errors, and a re-export in deliver/browser/__init__.py makes "
+        "that the ledger too (rule 75)."
     )

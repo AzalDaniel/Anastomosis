@@ -1,22 +1,21 @@
-"""Defensive browser-pack discovery (mirrors :mod:`anastomosis.reconstruct.packs`, RULES.md 21).
+"""Defensive browser-pack discovery over :mod:`anastomosis.core.packdirs` (RULES.md 21).
 
-Selector slots ship at ``DISCOVER``; ``anast destination init <name>``
-writes a ``selectors.yaml`` overlay into the user directory, leaving the
-built-in ``pack.yaml`` pristine. A pack is "ready" only once that overlay
-exists. Discovery order: ``--pack-dir`` → user dir → built-in scaffold.
-
-Loading is defensive: a broken file returns a diagnosis naming it, never
-a crash. PHI: pack names, config paths, and selector strings (vendor DOM).
+Selector slots ship at ``DISCOVER``; ``anast destination init <name>`` writes a
+``selectors.yaml`` overlay into the user directory, leaving the built-in
+``pack.yaml`` pristine — a pack is "ready" only once that overlay exists. A
+broken file returns a diagnosis naming it, never a crash. Nothing here is
+patient-derived: pack names, config paths and selector strings only.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
+from anastomosis.core.packdirs import ORIGIN_BUILTIN, ORIGIN_PACK_DIR, candidate_pack_dirs
 from anastomosis.destinations.browserpack import (
     BrowserPackConfig,
     PackNotReadyError,
@@ -26,9 +25,15 @@ from anastomosis.destinations.browserpack import (
 __all__ = [
     "BrowserPackError",
     "LoadedBrowserPack",
+    "PackReadiness",
     "load_destination_pack",
+    "pack_readiness",
     "user_destinations_dir",
 ]
+
+#: Whether this installation can file into a destination: its pack is
+#: discovered, or present but undiscovered, or not here at all.
+PackReadiness = Literal["ready", "needs-discovery", "absent"]
 
 # Built-in scaffolds ship alongside this module (destinations/<name>/pack.yaml).
 _BUILTIN_DIR = Path(__file__).resolve().parent
@@ -120,31 +125,6 @@ def _build_config(name: str, raw_config: Any, source: Path) -> BrowserPackConfig
         raise BrowserPackError(f"pack {name!r} `config:` in {source}: {exc}") from exc
 
 
-# Origins, in the precedence order the loader walks them. A pack is taken from
-# the FIRST origin that carries a pack.yaml.
-_ORIGIN_PACK_DIR = "pack-dir"
-_ORIGIN_USER = "user"
-_ORIGIN_BUILTIN = "builtin"
-
-
-def _candidate_dirs(name: str, pack_dirs: list[Path]) -> list[tuple[Path, str]]:
-    """The directories to look in, in precedence order, as (dir, origin).
-
-    ``--pack-dir`` > user dir > built-in; a ``--pack-dir`` may BE the pack
-    directory or CONTAIN a ``<name>/`` child.
-    """
-    candidates: list[tuple[Path, str]] = []
-    for parent in pack_dirs:
-        if (parent / _PACK_FILE).is_file() and parent.name == name:
-            candidates.append((parent, _ORIGIN_PACK_DIR))
-        child = parent / name
-        if (child / _PACK_FILE).is_file():
-            candidates.append((child, _ORIGIN_PACK_DIR))
-    candidates.append((user_destinations_dir() / name, _ORIGIN_USER))
-    candidates.append((_BUILTIN_DIR / name, _ORIGIN_BUILTIN))
-    return candidates
-
-
 def _resolve_selectors(
     name: str,
     pack_selectors: dict[str, Any],
@@ -162,7 +142,7 @@ def _resolve_selectors(
     merged: dict[str, Any] = dict(pack_selectors)
     selectors_source: Path = pack_dir
 
-    if origin == _ORIGIN_PACK_DIR:
+    if origin == ORIGIN_PACK_DIR:
         overlays = [pack_dir / _SELECTORS_FILE]
     else:
         overlays = [user_destinations_dir() / name / _SELECTORS_FILE]
@@ -192,10 +172,14 @@ def load_destination_pack(name: str, pack_dirs: list[Path] | None = None) -> Loa
     Raises :class:`BrowserPackError` (naming the file) when none is found
     or malformed. An undiscovered-but-valid pack loads with ``ready=False``.
     """
-    for pack_dir, origin in _candidate_dirs(name, list(pack_dirs or [])):
+    for pack_dir, origin in candidate_pack_dirs(
+        pack_dirs or [],
+        user_dir=user_destinations_dir(),
+        builtin_dir=_BUILTIN_DIR,
+        manifest=_PACK_FILE,
+        name=name,
+    ):
         manifest_path = pack_dir / _PACK_FILE
-        if not manifest_path.is_file():
-            continue
         data = _read_yaml_mapping(manifest_path)
         pack_name = data.get("name", name)
         if not isinstance(pack_name, str) or not pack_name:
@@ -218,9 +202,22 @@ def load_destination_pack(name: str, pack_dirs: list[Path] | None = None) -> Loa
             not_ready=not_ready,
             source=manifest_path,
             selectors_source=selectors_source,
-            builtin=origin == _ORIGIN_BUILTIN,
+            builtin=origin == ORIGIN_BUILTIN,
         )
     raise BrowserPackError(
         f"no destination pack {name!r} found (looked in --pack-dir, "
         f"{user_destinations_dir()}, and built-ins under {_BUILTIN_DIR})"
     )
+
+
+def pack_readiness(name: str, pack_dirs: list[Path] | None = None) -> PackReadiness:
+    """How far along the local browser pack for ``name`` is.
+
+    The one answer every surface showing filing readiness reads. A pack that
+    will not load is ``absent``: unavailable, and never a crash (rule 21).
+    """
+    try:
+        loaded = load_destination_pack(name, pack_dirs)
+    except BrowserPackError:
+        return "absent"
+    return "ready" if loaded.ready else "needs-discovery"

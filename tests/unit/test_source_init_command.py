@@ -1,9 +1,9 @@
-"""The shared learn-a-source command core (one flow, two frontends).
+"""The learn capability's TABULAR arm (one flow, two frontends).
 
-Pins the shared-core consolidation: ``resolve_example`` and the analyze -> confirm
--> build -> round-trip -> save flow live here once, returning enumerated codes
-both frontends present. The CLI (`test_cli_source`) and GUI
-(`test_gui_controller`) suites exercise the adapters; this pins the core directly.
+Pins the consolidation: ``resolve_example`` and the analyze -> confirm -> build
+-> round-trip -> save flow live in ``commands/learn.py`` once, returning
+enumerated codes both frontends present. The CLI (`test_cli_source`) and GUI
+(`test_gui_controller`) suites exercise the adapters; this pins the arm directly.
 """
 
 from __future__ import annotations
@@ -11,11 +11,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from anastomosis.commands.source_init_command import (
-    SourceInitCommand,
-    resolve_example,
-    run_source_init_command,
-)
+from anastomosis.commands.learn import LearnCommand, resolve_example, run_learn
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "learned" / "clinic_visits.csv"
 
@@ -42,15 +38,17 @@ def test_resolve_example_file_dir_and_ambiguous(tmp_path: Path) -> None:
 
 
 def test_invalid_name_is_rejected_before_analysis() -> None:
-    result = run_source_init_command(SourceInitCommand(example=FIXTURE, name="Bad-Name"))
+    result = run_learn(LearnCommand(kind="tabular", example=FIXTURE, name="Bad-Name"))
     assert result.ok is False
     assert result.error == "InvalidSourceName"
     assert result.fmt_type is None  # never analyzed
 
 
 def test_confirmation_required_returns_phi_safe_proposal(tmp_path: Path) -> None:
-    result = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="clinic_csv", out_dir=tmp_path, confirmed=False)
+    result = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="clinic_csv", out_dir=tmp_path, confirmed=False
+        )
     )
     assert result.ok is False
     assert result.error == "ConfirmationRequired"
@@ -66,8 +64,9 @@ def test_confirmation_required_returns_phi_safe_proposal(tmp_path: Path) -> None
 
 
 def test_confirmed_builds_round_trips_and_saves(tmp_path: Path) -> None:
-    result = run_source_init_command(
-        SourceInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=FIXTURE,
             name="clinic_csv",
             display="Clinic CSV",
@@ -77,18 +76,16 @@ def test_confirmed_builds_round_trips_and_saves(tmp_path: Path) -> None:
     )
     assert result.ok is True
     assert result.error is None
-    assert result.mapping_dir == tmp_path / "clinic_csv"
+    assert result.written_dir == tmp_path / "clinic_csv"
     assert (tmp_path / "clinic_csv" / "mapping.json").is_file()
     assert result.record_count == 3
-    assert "Learned source" in (result.mapping_md or "")
+    assert "Learned source" in (result.review_md or "")
 
 
 def test_cannot_analyze_carries_a_phi_safe_type_detail(tmp_path: Path) -> None:
     blank = tmp_path / "blank.csv"
     blank.write_text("", encoding="utf-8")  # no header/columns
-    result = run_source_init_command(
-        SourceInitCommand(example=blank, name="blank", confirmed=False)
-    )
+    result = run_learn(LearnCommand(kind="tabular", example=blank, name="blank", confirmed=False))
     assert result.ok is False
     assert result.error == "CannotAnalyze"
     assert result.detail  # an exception TYPE name (PHI-safe), not a cell value
@@ -100,8 +97,10 @@ def test_save_failure_carries_a_phi_safe_type_detail(tmp_path: Path) -> None:
     # result names the exception TYPE (the CLI prints it), never the save path.
     not_a_dir = tmp_path / "afile"
     not_a_dir.write_text("x", encoding="utf-8")
-    result = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="clinic_csv", out_dir=not_a_dir, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="clinic_csv", out_dir=not_a_dir, confirmed=True
+        )
     )
     assert result.ok is False
     assert result.error == "SaveFailed"
@@ -113,8 +112,8 @@ def test_mapping_load_failure_is_distinct_from_dropped(tmp_path: Path) -> None:
     # is a fixable MappingLoadFailed, NOT an unexplained WouldDropColumns.
     bad = tmp_path / "bad.csv"
     bad.write_text("PID,DOB\np1,garbage-not-a-date\n", encoding="utf-8")
-    result = run_source_init_command(
-        SourceInitCommand(example=bad, name="bad_src", out_dir=tmp_path, confirmed=True)
+    result = run_learn(
+        LearnCommand(kind="tabular", example=bad, name="bad_src", out_dir=tmp_path, confirmed=True)
     )
     assert result.ok is False
     assert result.error == "MappingLoadFailed"
@@ -131,8 +130,8 @@ def test_a_builtin_id_is_refused_before_anything_is_written(tmp_path: Path) -> N
     collision is knowable from the name alone (`get_source("ccda")`
     must stay the C-CDA adapter), so nothing is analysed or written
     before the refusal (#334, #333)."""
-    result = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="ccda", out_dir=tmp_path, confirmed=True)
+    result = run_learn(
+        LearnCommand(kind="tabular", example=FIXTURE, name="ccda", out_dir=tmp_path, confirmed=True)
     )
     assert result.ok is False
     assert result.error == "SourceIdReserved"
@@ -146,13 +145,17 @@ def test_an_already_learned_id_is_refused_rather_than_overwritten(tmp_path: Path
     without asking, and leave the adapter answering for a mapping
     absent from disk. Distinct from `SourceIdReserved`: one name can
     never be used, the other is the operator's own earlier work."""
-    first = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="reteach_me", out_dir=tmp_path, confirmed=True)
+    first = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="reteach_me", out_dir=tmp_path, confirmed=True
+        )
     )
     assert first.ok is True
 
-    again = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="reteach_me", out_dir=tmp_path, confirmed=True)
+    again = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="reteach_me", out_dir=tmp_path, confirmed=True
+        )
     )
     assert again.ok is False
     assert again.error == "SourceIdInUse"
@@ -169,8 +172,10 @@ def test_a_saved_format_is_selectable_without_a_restart(tmp_path: Path) -> None:
     from anastomosis.sources import get_source
     from anastomosis.sources.learned import LearnedSourceAdapter
 
-    result = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="selectable_now", out_dir=tmp_path, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="selectable_now", out_dir=tmp_path, confirmed=True
+        )
     )
     assert result.ok is True
 
@@ -199,8 +204,9 @@ def test_the_whole_correction_arc_conserves_what_it_loads(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    def command(decisions: dict[str, tuple[str, str]]) -> SourceInitCommand:
-        return SourceInitCommand(
+    def command(decisions: dict[str, tuple[str, str]]) -> LearnCommand:
+        return LearnCommand(
+            kind="tabular",
             example=example,
             name="clinic_visits_corrected",
             out_dir=tmp_path,
@@ -211,9 +217,7 @@ def test_the_whole_correction_arc_conserves_what_it_loads(tmp_path: Path) -> Non
             row_scope="encounter",
         )
 
-    wrong = run_source_init_command(
-        command({"VisitId": ("encounter.date_of_service", "parse_date")})
-    )
+    wrong = run_learn(command({"VisitId": ("encounter.date_of_service", "parse_date")}))
     assert wrong.ok is False
     assert wrong.error == "MappingLoadFailed"
     assert wrong.detail_column == "VisitId"
@@ -222,7 +226,7 @@ def test_the_whole_correction_arc_conserves_what_it_loads(tmp_path: Path) -> Non
     assert "V-001" not in repr(wrong), "the cell value never leaks"
     assert not (tmp_path / "clinic_visits_corrected").exists(), "no partial directory"
 
-    corrected = run_source_init_command(
+    corrected = run_learn(
         command(
             {
                 "VisitDate": ("encounter.date_of_service", "parse_date"),
@@ -274,8 +278,10 @@ def test_an_unreviewed_command_still_behaves_exactly_as_before(tmp_path: Path) -
     The correction path must be a pure addition — an operator who never touches
     it teaches formats exactly as yesterday, decided by the same scorer.
     """
-    result = run_source_init_command(
-        SourceInitCommand(example=FIXTURE, name="clinic_plain", out_dir=tmp_path, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="clinic_plain", out_dir=tmp_path, confirmed=True
+        )
     )
     assert result.ok is True
     assert (tmp_path / "clinic_plain" / "mapping.json").is_file()
@@ -292,8 +298,9 @@ def test_an_override_does_not_inherit_the_scorers_stale_confidence(tmp_path: Pat
     example.write_text(
         "MRN,VisitDate,Notes\np1,01/05/2024,ok\np2,02/06/2024,fine\n", encoding="utf-8"
     )
-    result = run_source_init_command(
-        SourceInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=example,
             name="overridden",
             out_dir=tmp_path,
@@ -322,8 +329,9 @@ def test_a_lossy_read_keeps_the_cell_it_cannot_reproduce(tmp_path: Path) -> None
         "p2,02/06/2024,syncope with head injury\n",
         encoding="utf-8",
     )
-    result = run_source_init_command(
-        SourceInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=example,
             name="lossy_probe",
             out_dir=tmp_path,
@@ -369,13 +377,14 @@ def test_a_per_field_refusal_is_a_mapping_error_too(tmp_path: Path) -> None:
     refuse through the one error type, and nothing echoes the
     operator's input."""
     example = tmp_path / "visits.csv"
-    example.write_text("MRN,Notes\np1,fine\n", encoding="utf-8")
+    example.write_text("MRN,Notes\np1,zebrafish-quinine-0917\n", encoding="utf-8")
     for decisions in (
         {"Notes": ("patient.last_name", "strip")},  # unknown canonical target
         {"Notes": ("encounter.chief_complaint", "const:")},  # arity 0 for a 1-arg verb
     ):
-        result = run_source_init_command(
-            SourceInitCommand(
+        result = run_learn(
+            LearnCommand(
+                kind="tabular",
                 example=example,
                 name="badfield",
                 out_dir=tmp_path,
@@ -389,6 +398,7 @@ def test_a_per_field_refusal_is_a_mapping_error_too(tmp_path: Path) -> None:
         assert result.ok is False
         assert result.error == "CannotBuildMapping", (result.error, result.detail)
         assert "input_value" not in (result.detail or "")
+        assert "zebrafish-quinine-0917" not in (result.detail or ""), "a cell value rode the detail"
         assert not (tmp_path / "badfield").exists()
 
 
@@ -398,8 +408,9 @@ def test_a_grouping_refusal_points_at_the_grouping(tmp_path: Path) -> None:
     of telling the operator to change a transform that was never wrong."""
     example = tmp_path / "visits.csv"
     example.write_text("MRN,VisitId,Complaint\np1,V-1,cough\np1,V-1,fever\n", encoding="utf-8")
-    result = run_source_init_command(
-        SourceInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=example,
             name="dupkey",
             out_dir=tmp_path,

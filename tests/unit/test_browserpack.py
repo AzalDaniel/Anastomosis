@@ -33,6 +33,7 @@ from anastomosis.destinations.browserpack import (
     PageLike,
     SelectorMap,
 )
+from anastomosis.destinations.wizard import SLOT_GUIDANCE
 
 # --- synthetic patient + DOB string built from date parts ---
 
@@ -187,6 +188,40 @@ def test_a_page_without_the_form_verbs_is_not_pagelike() -> None:
 
 # --- SelectorMap validation ---
 
+# The slot names as the shipped pack.yaml and every discovered selectors.yaml
+# spell them, in the order the wizard prompts for them — restated here so the
+# schema they are now read off cannot quietly drop, add or reorder one.
+_REQUIRED = (
+    "patient_search_input",
+    "patient_search_submit",
+    "patient_result_row",
+    "patient_banner_name",
+    "patient_banner_dob",
+    "documents_list_item",
+    "upload_file_input",
+    "upload_submit",
+    "upload_success_marker",
+)
+_OPTIONAL = (
+    "documents_tab",
+    "upload_open_button",
+    "upload_filename_input",
+    "upload_category_select",
+    "upload_status_select",
+    "upload_date_input",
+    "upload_patient_prefill",
+    "upload_provider_select",
+    "upload_comments_input",
+)
+
+
+def test_the_schema_declares_every_slot_and_which_half_it_is_in() -> None:
+    """A field with no default is required, one with a default optional, and
+    a selectors.yaml written in this order must keep reading the same way."""
+    assert SelectorMap.required_slots() == _REQUIRED
+    assert SelectorMap.optional_slots() == _OPTIONAL
+    assert set(SLOT_GUIDANCE) == set(_REQUIRED) | set(_OPTIONAL)
+
 
 def test_selectormap_missing_required_slot_raises_naming_it() -> None:
     data = {slot: f"#{slot}" for slot in SelectorMap.required_slots()}
@@ -271,6 +306,16 @@ def test_an_unknown_selector_slot_is_named_rather_than_dropped() -> None:
     data["upload_categories_select"] = "#a-plausible-typo"  # not a slot name
     with pytest.raises(ValueError, match="upload_categories_select"):
         SelectorMap.from_yaml_dict(data, pack_name="testpack")
+
+
+def test_every_form_slot_may_carry_the_row_token() -> None:
+    """The mirror of the refusal below: the seven dialog slots are exactly the
+    ones a pack may write ``{idx}`` into, and it survives to the driver."""
+    data = {slot: f"#{slot}" for slot in SelectorMap.required_slots()}
+    data.update({slot: f"#{slot}-{{idx}}" for slot in _FORM_SLOTS})
+    sm = SelectorMap.from_yaml_dict(data, pack_name="testpack")
+    for slot in _FORM_SLOTS:
+        assert getattr(sm, slot) == f"#{slot}-{{idx}}", slot
 
 
 def test_the_row_token_outside_the_upload_form_is_refused() -> None:

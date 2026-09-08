@@ -134,7 +134,7 @@ The 79-row field inventory (entity · model field · export path:line · ingest 
 | `verify/types.py` | 71 | KEEP | four production importers and `test_import_boundaries.py:173-230`; only the rationale docstring goes (RULES.md 54) |
 | `browser/tracking.py` + `browser/persist.py` | — | KEEP both | not one store: the manifest is immutable WHAT with demographics, the ledger is mutable PROGRESS with no column typed for demographics; its `file_path` column is name-derived and never logged |
 
-The import cost the plan attributed to `core.migrate` is real but lands elsewhere: `import anastomosis.core.migrate` is 0.027 s / 93 modules (its browser imports are already function-local); `import anastomosis.deliver.browser.persist` is 0.310 s / 364 modules because `__init__` drags in `sqlite3`, the engine, tracking, CDP and `verify.composite`. `import anastomosis.cli` is 0.084 s / 223 modules already, so S-3 may not claim a faster CLI.
+The import cost the plan attributed to `core.migrate` is real but lands elsewhere: `import anastomosis.core.migrate` is 0.027 s / 93 modules (its browser imports are already function-local); `import anastomosis.deliver.browser.persist` is 0.310 s / 364 modules because `__init__` drags in `sqlite3`, the engine, tracking, CDP and `verify.composite`. `import anastomosis.cli` is 0.084 s / 223 modules already, so S-3 may not claim a faster CLI. S-3 landed: both package inits are docstring markers, and the manifest writer now loads 64 project modules against 75 with no `sqlite3`, the verification ladder 31 against 75 with none of `sqlite3`, `jinja2` or `lxml`. The writer still reaches `jinja2` and `lxml` through `browser/manifest.py`'s `reconstruct.engine` import and `browser/persist.py`'s `pipeline` import; both are runtime uses and are left for the slice that owns them.
 
 ### 4.6 deliver outputs
 
@@ -174,10 +174,10 @@ Neither archive nor bundle zips today; the plan's "zip" step does not exist and 
 | `destinations/loader.py` | 270 | MERGE-INTO one discovery walk | its own docstring says it mirrors `reconstruct.packs`; same three-origin order retyped |
 | `destinations/browserpack.py` | 1,031 | SIMPLIFY | `_REQUIRED_SLOTS`/`_OPTIONAL_SLOTS`/`_FORM_SLOTS` (97–149) are three Python tuples duplicating the YAML keys every `pack.yaml` and `selectors.yaml` already state; the page-driving group (~600 lines) cannot be data. 44-line module docstring |
 | `destinations/tebra/__init__.py` | 20 | MERGE-INTO `tebra/pack.yaml`'s header | doc-only; says what the YAML header says |
-| `destinations/__init__.py` | 71 | SIMPLIFY | docstring line 5 says "land in M2", a stale phase marker |
+| `destinations/__init__.py` | 71 | SIMPLIFY | docstring line 5 says "land in M2", a stale phase marker. Closed in S-3, which emptied the re-exports and rewrote the docstring |
 | `reconstruct/packs.py:143 PageGeometry` vs `packgen/infer.py:537 PageGeometry` | — | finding | same name, different shape (manifest inches vs measured points), one converter between them. Rename one |
 
-The registry: 13 entries; `tebra` alone declares `browser: {kind: pack}`; three declare `doc_write_api: fhir_documentreference` (`epic`, `canvas`, `oracle_health`), two `vendor_rest` (`athenahealth`, `drchrono`), five `unverified`, two `none`. No code fabricates a pack for the twelve: `load_destination_pack` raises naming the missing directory, `SelectorMap.from_yaml_dict` refuses a DISCOVER-only scaffold, `gui/controller.py:287-350` reports `pack: None`. The one place all thirteen look equally ready is `cli_commands/guide.py:481-486 _destination_options()`, an unfiltered `sorted(...)` of the registry; that is a presentation fix, not a registry one.
+The registry: 13 entries; `tebra` alone declares `browser: {kind: pack}`; three declare `doc_write_api: fhir_documentreference` (`epic`, `canvas`, `oracle_health`), two `vendor_rest` (`athenahealth`, `drchrono`), five `unverified`, two `none`. No code fabricates a pack for the twelve: `load_destination_pack` raises naming the missing directory, `SelectorMap.from_yaml_dict` refuses a DISCOVER-only scaffold, `gui/controller.py:287-350` reports `pack: None`. The one place all thirteen looked equally ready was `cli_commands/guide.py:481-486 _destination_options()`, an unfiltered `sorted(...)` of the registry; S-12 made it a presentation fix, not a registry one — all thirteen still appear, each labelled with how far along its filing assistant is, the ones that can be filed into first.
 
 ### 4.9 qa, pipeline, cli
 
@@ -265,7 +265,7 @@ Each slice's PR cites these rows. Where the evidence supports less than the plan
 - **S-10 tabular sources.** The nine pure-table entity mappers in `pf_tebra` and the two in `oracle_ehi` take `learned/spec.py`'s `FieldMapping` shape; joins, refusals, `_PlanTypeLookup`, the CLINICAL_EVENT classifier and the two-path document artifact stay code. Estimate −400 to −600, not −1,500.
 - **S-11 QA and verify.** `_REGISTRY` → tuple; `wholepatient` scope tables → `scope=`; seven level classes → functions behind `_POLICY_SKIPS`; the delegates and the doubled cache went in S-2. Estimate −200 to −300, not −700.
 - **S-12 destinations.** One discovery walk shared by `reconstruct/packs.py` and `destinations/loader.py`; `_load_pack_dir`/`_load_pack_snapshot` → one; the three slot tuples generated from one schema; `tebra/__init__.py` → the YAML header; `guide.py`'s destination picker shows pack readiness. Estimate −300 to −400, not −800.
-- **S-13 command layer and seams.** `attach=` on `run_upload_command` replaces `cli.py:58,71` and `gui/controller.py:79`; `upload_cmd`, `run_upload_command`, `run_pipeline`, `_run_ccda_standard` split at the steps in §5; `guide.py` prompts → a table; `selfcheck.py` → a loop; `_resolve_migration_profile` → a table; `runs.py` → one locked runner; the pipeline/packsrc engine-construction duplicate → one function. Estimate −700 to −900.
+- **S-13 command layer and seams.** `attach=` on `run_upload_command` replaces `cli.py:58,71` and `gui/controller.py:79`; `upload_cmd`, `run_upload_command`, `run_pipeline`, `_run_ccda_standard` split at the steps in §5; `guide.py` prompts → a table; `selfcheck.py` → a loop; `_resolve_migration_profile` → a table; `runs.py` → one locked runner; the pipeline/packsrc engine-construction duplicate → one function. Estimate −700 to −900. **Measured: +9 src.** The estimate was taken before S-1's prose sweep, which already took the lines it counted (`upload_cmd` 274 → 254, `guide.py` 726 → 661, `pipeline.py` 1,678 → 1,220, `runs.py` 714 → 623). What the map removes is 85 lines of duplicate and dead code; the four splits it also asks for pay a signature, a contract and a call site each, about 20 lines apiece, and buy complexity instead: `upload_cmd` D/22 → C/13, `run_pipeline` C/13 → B/7, `run_upload_command` B/9 → B/6, `_resolve_migration_profile` C/17 → C/12. Three items measured out as costing more machinery than the repetition they remove and were left alone with the numbers stated: `selfcheck`'s nine checks (four locators plus a table = +13 lines over the four inline checks), `guide.py`'s prompts (21 questions as table rows are no shorter than 21 `_ask_*` calls), and the FULL locked runner (a template method needs two closures per flow and comes out longer; only the refusal folded).
 
 ## 7. Duplicates confirmed, pair by pair
 
@@ -334,8 +334,8 @@ Most `except` clauses in the tree are a documented fail-closed or a documented d
 3. **`core/hashutil.py` has no direct test.** Add one in S-2, before the four forks fold into it.
 4. **The dead-code report's `GuiApi` count was 14; the class has 19.** Recorded so the discrepancy is not repeated.
 5. **`packgen/emit.py:522 _conflict_rows` and `core/textutil.py:531,542,546` (`handle_charref`, `handle_decl`, `handle_pi`)** have zero coverage and are real dispatch paths; the sanitizer one appends text in a PHI-facing path. Fixtures, not deletion.
-6. **`cli_commands/guide.py:481-486`** lists all thirteen destinations as equally ready.
-7. **`reconstruct/packs.py:143` and `packgen/infer.py:537` both define `PageGeometry`** with different shapes.
+6. **`cli_commands/guide.py:481-486`** listed all thirteen destinations as equally ready. Closed in S-12: the label carries `destinations.loader.pack_readiness`, which `destination list`/`route` also read.
+7. **`reconstruct/packs.py` and `packgen/infer.py` both define `PageGeometry`** with different shapes: the first is the `page:` block of `pack.yaml` (a size name and four CSS margin strings, inches); the second is measured off sample PDFs (six floats, points). S-12 looked and left both. They never meet in one module — `packgen/emit.py` reads the measured one and writes the manifest one as text — and each rename is a public-surface change S-12 does not own: `packgen.PageGeometry` is re-exported in that package's `__all__`, and the other IS the manifest schema every shipped and taught `pack.yaml` validates against. S-6 owns `packgen`; rename there or here, not in both.
 8. **`gui/web/*.js` carries thirteen "used to" comments** in `shell.js` alone; the prose gate's history words apply to JS comments too.
 9. **Rule 2 is violated at eight sites.** `str(exc)` or an exception message is interpolated into a user-facing or logged message at `pipeline.py:365,368,1236,1377,1463,1470`, `core/migrate.py:182`, `core/source_init_command.py:243`; `pipeline.py:368` interpolates an adapter exception into a message the operator sees. Each becomes `exc_tag(exc)` in the slice that touches its file, or S-2 takes them all.
 10. **`sources/learned/transforms.py:52,65` parse dates with `strptime`** outside `core/timeutil.py`: a fifth date-parsing fork for S-2's list.
@@ -343,7 +343,14 @@ Most `except` clauses in the tree are a documented fail-closed or a documented d
 12. **Learning a new destination is manual.** The tool learns a new input format and a new page layout with the operator confirming; a new portal is still `destination init`, a selector wizard writing YAML, one shipped pack. The owner's mission statement makes a new portal the same kind of thing as a new note layout: something the tool learns and then drives, under rules 12, 13, 69 and 70. No slice designs it yet; the clean-room architect's deliverable A and S-12 are where it is decided.
 13. **No committed fixture can make QA say anything but pass.** The default pack, `packs/generic_soap/pack.yaml`, declares none of the five `CHARTABLE_KINDS` in its coverage block, so `RecordCoverageCheck` can never report `not_carried` on it, and no `--section` or `--include` combination over the five fixtures produces a warn or fail. The snapshot net therefore cannot see a QA verdict regression; the six mutation tests in `tests/unit/test_qa.py` are the only guard, and they stay. S-11 adds a fixture-and-pack pair that fails a check on purpose.
 14. **The raw Kareo export root yields one patient; the curated two-document pair yields two.** Driven on `main` 7738b26 and on this branch with identical results (exit 0 both; 1 rendered vs 2 rendered). The root holds two top-level XML documents of 23,311 and 29,610 bytes; whether the second is folded into the first as the same patient (rule 9) or skipped is not established. UNVERIFIED until the ledger's disposition for the second document is read.
+16. **`health_concerns` and `screening_events` never reached a FHIR bundle.** `to_bundle` stashed three record-level lists under `EXTRAS_NS` and `from_bundle` read the same three back; `PatientRecord` carries five, and `sources/pf_tebra/mapper.py:1672,1675` populates both of the missing ones. A Tebra export with a health concern or a screening worksheet lost it on every archive, bundle and FHIR-API delivery. Found by S-4 when the two lists became one table; the fixtures carry neither, which is why no test and no snapshot saw it. Fixed in S-4 (`RECORD_EXTRAS`), guarded by `tests/unit/test_fhir.py::test_every_record_level_list_survives_the_round_trip`, which walks `PatientRecord`'s own annotations rather than the table.
+
+17. **The four §4.3 asymmetries, adjudicated.** `sex`, allergy `category` and allergy `severity` are each written twice — once as the FHIR code a foreign system reads, once verbatim in the lossless tail — and only the tail is read back. The round trip is therefore already exact; the structural write is a deliberate lossy projection, kept, and now pinned by `tests/unit/test_fhir.py::test_a_lossy_fhir_projection_never_decides_what_comes_back`. `DocumentArtifact.mime_type` was the one real defect: `Attachment.contentType` is pruned when empty, export's model default is `application/pdf` and ingest's read fallback `application/octet-stream`, so an empty mime type came back as a type the record never claimed. Fixed in S-4 by carrying that one case in the tail (no other value's bytes change); a foreign bundle with neither still reads as `application/octet-stream`.
+
 15. **A learned mapping and a template pack answer one question two ways.** A pack whose content hash changed is unavailable until re-trusted (rule 22); a learned mapping whose `source_trust.json` hash mismatches after review only warns and still loads (`sources/learned/__init__.py`). Rule 87 says one answer. Decide in S-6 with the learn capability.
+
+18. **`packs/generic_soap/context.py` still spells `%B %d, %Y` inline**, the second occurrence of `packctx.format_date_long`. Changing it moves the `generic_soap` layout hash, which is the hash `tools/snapshot_baseline.json` captures in every `render_provenance.json`, so it belongs in a slice that re-pins the snapshot deliberately — not in S-5, which re-pinned only the PF pack's. Recorded so the duplicate is not mistaken for an oversight.
+19. **`_demographics` and `_coverage_view` stay in the PF pack**, against S-5's merge map, because each reads a `pf_tebra:`-namespaced extension key and `reconstruct/packctx.py`'s contract is to depend on nothing but the canonical model. Moving them would put a source adapter's column names (`DeathDate`, `OfficePhoneExtension`, `InsurancePaymentType`) into a module that must not know them. Their CC 17 each stays in the pack; everything they call moved.
 
 ## 12. Rules the prose was protecting
 
@@ -430,3 +437,46 @@ A mechanical AST classifier put 2,062 of 2,513 tests in the hypothetical column;
 | `tests/` after | ~32,000 | ~50,000 (from 64,002) |
 
 The halving in the owner's brief is metaphor for "everything it does, in as little as a veteran would write". The evidence says the veteran's version of this tool is about a third smaller in code and two-thirds smaller in prose, not half in code, because two of its subsystems are already at the size the problem costs (C-CDA, layout inference, by reference measurement), one is seven times smaller than its reference (the upload engine), and one is already smaller than its reference (QA). What remains large after the slices is large for a reason a row in this ledger names. Where a slice's structural well runs dry before its estimate, the PR says so and stops; that is the rule from `banach-tarski-refactor`, and it is why these numbers are written down before the first cut.
+
+## 15. The final sweep: the files no slice claimed
+
+Sections 4.1–4.10 verdict the files the eleven package auditors reached. Section 6
+maps the rest onto thirteen slices. Twenty-two files, 4,028 lines, fall through both:
+they are in no slice's merge map, and eleven of them carry no verdict row above —
+four are absent from this document entirely, and seven appear only inside a rule
+citation (§12) or a findings list (§8, §9), which names a line, not a disposition.
+
+They were read for this section, not pattern-matched. A grep for these paths
+disagreed with the prose in two places: `base.py` in §4.9 is `qa/base.py`, and
+`sources/base.py` has no row at all; `packs/generic_soap/context.py` does have one
+(§4.8) and the grep missed it.
+
+| path | lines | verdict | reason |
+|---|---|---|---|
+| `__init__.py` | 11 | KEEP | the docstring and `__version__`; nothing else in it. Its "no network on the core path" line is RULES.md 37 |
+| `sources/__init__.py` | 28 | KEEP | a re-export facade over `base`. It omits `QuarantinedRows`, correctly: all five users import that from `sources.base` directly |
+| `sources/_rowutil.py` | 54 | KEEP | §4.2 — already the unification |
+| `sources/base.py` | 169 | KEEP | the adapter contract, the registry, and `_ensure_builtin_adapters`' literal imports, which are each built-in adapter's only static reference and so the reason the frozen Windows build ships them at all |
+| `deliver/__init__.py` | 10 | KEEP | §4.6 — doc-only |
+| `deliver/router.py` | 172 | SIMPLIFY, done here | pure routing logic, no I/O. `_capability_option` took a `field: str` its body never read; both callers passed a literal that went nowhere. Ruff's `ARG` rules are not enabled, so nothing caught it |
+| `deliver/render_index.py` | 168 | KEEP | §4.6 |
+| `deliver/fhir_api/__init__.py` | 12 | KEEP | §4.6 — doc-only |
+| `deliver/fhir_api/attach.py` | 44 | KEEP | §4.5 — the seam itself. Both imports stay inside the function: either would drag the whole browser-upload package in behind `browser.errors` |
+| `deliver/fhir_api/client.py` | 286 | KEEP | stdlib `urllib`, no new dependency; loopback-only http, a `__repr__` that cannot print the token, and one redirect handler that refuses before urllib copies `Authorization` onto a server-named URL |
+| `deliver/fhir_api/destination.py` | 529 | KEEP | §4.6 |
+| `packs/generic_soap/context.py` | 81 | KEEP | §4.8 — and the pack `migrate.py` actually names by default |
+| `packs/practice_fusion_soap/context.py` | 1,090 | SIMPLIFY | §4.8, **owned by S-5**. The one file the prose sweep skipped, to hold the pack layout hash still |
+| `reconstruct/__init__.py` | 28 | KEEP | a re-export facade over `packs` and `packtrust` |
+| `reconstruct/engine.py` | 353 | KEEP, receipt added here | the allocator, the recycle-and-retry lifecycle, the collision widening, and the conservation check. §9 listed its `RenderIndexConflict` branch as unreachable-by-construction and said each such branch gets a test in the slice that touches its file — no slice touches this one, so the receipt is here |
+| `reconstruct/chromium.py` | 71 | KEEP | the one `Renderer` implementation; the Protocol beside it is the seam every test renders through |
+| `reconstruct/packctx.py` | 91 | KEEP | §4.8 — zero static importers, reached only through the sandbox allowlist. **A dead-code pass must exclude it** |
+| `reconstruct/packexec.py` | 200 | KEEP | the pack sandbox. 140 of its lines are the two allowlists, which are data and are the point; its own docstring is honest that it is a loud refusal, not a security boundary |
+| `reconstruct/packtrust.py` | 159 | KEEP | §4.8's merge (the third streaming sha256) landed in S-2; the trust store itself stays |
+| `reconstruct/provenance.py` | 255 | KEEP | §4.8's merge (the fifth digester) landed in S-2; `RecordingLoader` is the only thing that knows which template bytes reached the compiler |
+| `reconstruct/ccda_standard/__init__.py` | 23 | KEEP | doc-only, plus the four re-exports |
+| `reconstruct/ccda_standard/renderer.py` | 194 | KEEP | the neutral render path — `build_ccd` → HL7's pinned `CDA.xsl` under `read_network=False` → PDF. Eight functions, none over 40 lines. This is the path the real export drives |
+
+Twenty KEEP, two SIMPLIFY. One of the two is S-5's. The other is the four lines
+deleted below, which is the whole of what this sweep found to cut: after the prose
+sweep and twelve structural slices, the files nobody claimed are the ones that were
+already the size their problem costs.

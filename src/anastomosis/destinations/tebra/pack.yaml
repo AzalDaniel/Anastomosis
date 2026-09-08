@@ -1,4 +1,6 @@
 # Tebra (Kareo) browser destination pack — a FLOW SHAPE, not real selectors.
+# No Python ships beside it: the generic BrowserPackDestination drives these
+# slots, so this file is the whole pack.
 #
 # WHY EVERY SELECTOR IS A PLACEHOLDER:
 #   Tebra publishes no document-write API (see destinations/registry.yaml), so a

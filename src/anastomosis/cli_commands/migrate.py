@@ -26,14 +26,10 @@ def _resolve_migration_profile(
     section: list[str] | None,
     qa: bool | None,
 ) -> tuple[str, str, str, dict[str, bool], bool]:
-    """Resolve the migration config from a saved profile + explicit overrides.
-
-    A ``--profile`` supplies defaults for source/destination/render/sections/qa;
-    any explicitly-typed flag overrides it. Loud, PHI-safe failures (a missing
-    profile, a profile lacking the required fields) become a clean exit 2 rather
-    than a traceback. Returns the resolved ``(source, destination, render,
-    sections, qa)``.
-    """
+    """Resolve the migration config from a saved profile plus explicit
+    overrides: any typed flag wins, the profile fills the rest. A missing
+    profile, or one lacking a required field, refuses PHI-free at exit 2.
+    Returns ``(source, destination, render, sections, qa)``."""
     from anastomosis import cli as _cli
     from anastomosis.commands.migrate import RENDER_NEUTRAL, default_migration_profiles
 
@@ -49,22 +45,26 @@ def _resolve_migration_profile(
             raise typer.Exit(code=2)
         saved = loaded
 
-    # Explicit flags win over the profile; the profile fills the rest.
-    resolved_source = source if source is not None else saved.get("source")
-    resolved_destination = destination if destination is not None else saved.get("destination")
-    if not isinstance(resolved_source, str) or not resolved_source:
-        _cli.console.print("[red]--from is required[/red] (or supply it via --profile).")
-        raise typer.Exit(code=2)
-    if not isinstance(resolved_destination, str) or not resolved_destination:
-        _cli.console.print("[red]--to is required[/red] (or supply it via --profile).")
-        raise typer.Exit(code=2)
-
-    if render is not None:
-        resolved_render = render
-    elif isinstance(saved.get("render"), str):
-        resolved_render = str(saved["render"])
-    else:
-        resolved_render = RENDER_NEUTRAL
+    # One row per field the profile may supply: the typed flag (which always
+    # wins), the profile key, the type a saved value must have to count at all,
+    # the fallback when neither end supplies one, and the flag name to name in
+    # a refusal when there is no fallback. `sections` is not here: parsing it
+    # needs the source and render this table resolves.
+    fields: tuple[tuple[str, object, type, object, str], ...] = (
+        ("source", source, str, None, "--from"),
+        ("destination", destination, str, None, "--to"),
+        ("render", render, str, RENDER_NEUTRAL, ""),
+        ("qa", qa, bool, True, ""),
+    )
+    picked: dict[str, object] = {}
+    for key, explicit, kind, fallback, flag in fields:
+        value = explicit if explicit is not None else saved.get(key)
+        picked[key] = value if isinstance(value, kind) else fallback
+        if flag and not picked[key]:
+            _cli.console.print(f"[red]{flag} is required[/red] (or supply it via --profile).")
+            raise typer.Exit(code=2)
+    resolved_source = str(picked["source"])
+    resolved_render = str(picked["render"])
 
     saved_sections = saved.get("sections")
     if section is not None:
@@ -76,14 +76,13 @@ def _resolve_migration_profile(
     else:
         resolved_sections = {}
 
-    if qa is not None:
-        resolved_qa = qa
-    elif isinstance(saved.get("qa"), bool):
-        resolved_qa = bool(saved["qa"])
-    else:
-        resolved_qa = True
-
-    return resolved_source, resolved_destination, resolved_render, resolved_sections, resolved_qa
+    return (
+        resolved_source,
+        str(picked["destination"]),
+        resolved_render,
+        resolved_sections,
+        bool(picked["qa"]),
+    )
 
 
 def _exit_on_pipeline_error(exc: PipelineError, cmd: MigrationCommand) -> NoReturn:

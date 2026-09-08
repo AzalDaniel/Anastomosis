@@ -610,6 +610,171 @@ issue and fixed in its own pull request.
   those two files, so the base branch's own drift is not folded into this
   slice. (#428)
 
+- **The guided session stops telling you every system is ready to receive
+  charts.** `anast` with no arguments offered the thirteen destinations as a
+  plain alphabetical list, so Epic — which no filing assistant on this
+  computer can file into — read exactly like Tebra, the one destination that
+  ships an assistant, and AdvancedMD was the pre-filled default because the
+  alphabet put it first. All thirteen still appear: the registry is data and
+  nothing was removed from it. Each now carries how far along its filing
+  assistant is ("ready to file charts into", "the filing assistant is here
+  but not set up yet", "no filing assistant yet"), and the ones that can be
+  filed into come first. The three states come from one function,
+  `destinations.loader.pack_readiness`, which is also what `anast destination
+  list` and `anast destination route` print in their Filing assistant column.
+
+- **Template packs and destination packs are discovered by one walk.**
+  `destinations/loader.py` opened by saying it mirrored
+  `reconstruct/packs.py`, and it did: the same `--pack-dir` → user directory →
+  built-in order (rule 21), the same "a directory may BE a pack or CONTAIN
+  packs" rule, and the same three origin names retyped as private copies.
+  There is now one walk in `core/packdirs.py` — enumerating for
+  `discover_packs`, narrowed by name for `load_destination_pack` — and it
+  keeps both readings of the one case where the two differed. Alongside it,
+  `_load_pack_dir` and `_load_pack_snapshot` became one `_load_pack`: they
+  stated the same contract twice (pack.yaml, template.html and context.py all
+  required, each refused by name, the manifest naming the pack), differing
+  only in where the bytes come from. Both context loaders stay as they were —
+  an importlib load off a path and an exec of hash-pinned bytes are different
+  mechanisms, and rule 22 hangs on the second.
+
+- **The browser pack's selector slots are read off the schema that declares
+  them.** `SelectorMap`'s eighteen fields, `_REQUIRED_SLOTS`,
+  `_OPTIONAL_SLOTS` and `_FORM_SLOTS` said the same names three times over;
+  the three sets now come off `dataclasses.fields`, with no default meaning
+  required and a `form` marker naming the seven slots the upload dialog owns.
+  Same names, same order, so the wizard prompts and writes `selectors.yaml`
+  exactly as before. Two tests hold it: one restates all eighteen names and
+  which half each is in, cross-checked against the wizard's own guidance
+  keys; the other says a form slot may carry the `{idx}` row token, which
+  nothing had ever checked.
+
+- **QA and the verification ladder go flat.** The engine checks were a
+  registry with one writer and one reader: `checks.py` registered seven
+  checks in a loop, `base.py` sorted them back out, and a duplicate-name
+  guard stood between them over a name that could only be written once.
+  `ENGINE_CHECKS` is the seven, in the name order every `qa_report.json`
+  lists them in; the `QACheck` protocol stays, because `run_qa(checks=...)`
+  — the extension point a pack actually uses — is typed with it.
+  `wholepatient.py` stated the same shape twice, one table of the checks a
+  whole-patient document can answer and one of the checks it records as
+  skipped, with only a test holding the pair to covering every check
+  between them; `WHOLE_PATIENT_SCOPE` places each check once, and the run
+  list reads that table by name, so a check nobody has placed raises
+  instead of falling quietly out of the report. The seven L0-L6 levels were
+  classes whose only state was their own level id, and are seven functions;
+  L6's tier-2 identity re-assertion is its own function, so
+  `deliver/verify/levels.py` leaves the complexity baseline with no
+  violating block at all rather than carrying its old C/12 in under a new
+  name. Nothing a check or a level says changed: every level body is
+  AST-identical to the method it replaced, the five fixtures are
+  byte-identical (`tools/snapshot.py`), and a real two-document export
+  writes the same `qa_report.json` to the byte. Neutering each of the seven
+  checks and each of the seven levels in a scratch copy turns a named test
+  red. The corpus pin is unmoved, the guard count holds at 72, and neither
+  gate baseline needed regenerating.
+
+- **One seam attaches a destination, not four.** `cli._make_destination` and
+  `gui/controller._attach_destination` were byte-identical wrappers around
+  `deliver.browser.attach.attach_destination`, and `cli._make_fhir_destination`
+  around its FHIR twin; all three are gone, and both frontends call the seam
+  that owns each flow, imported inside the command body so a bare
+  `import anastomosis.cli` still leaves the upload engine unloaded.
+  `cli._make_validator` moves to
+  `destinations/wizard.attach_selector_validator`, beside the
+  `CdpSelectorValidator` it builds. The margins dict and the
+  `ReconstructionEngine` construction stood twice — in `run_pipeline` and in
+  the pack preview — and are now `reconstruct.engine.build_render_engine`,
+  which reads page size and all four margins off the pack's own manifest so
+  neither caller states paper at all. The two GUI run flows wrote their
+  refusal four times between them; `_refused` says it once. `_paths.out_file`
+  had no caller anywhere and is deleted, and its one-caller `_typed_path`
+  folds into `out_dir`.
+
+  Four long functions split at the steps the audit ledger names, and only
+  there: `upload_cmd`'s two route pre-flights become `_resolve_api_attach`
+  and `_resolve_browser_attach` (D/22 to C/13, and the module's average from
+  12.5 to 6.25 at the same total); `run_pipeline`'s pack resolve and both
+  folder guards become `_resolve_pack_and_guard` (162 lines and C/13 to 118
+  and B/7); `run_upload_command`'s resource wiring becomes
+  `_wire_run_resources` (147 lines and B/9 to 92 and B/6); and
+  `_resolve_migration_profile`'s five explicit-overrides-saved ladders become
+  one table walked once (C/17 to C/12). Every `--help` page — the top level
+  and all seventeen subcommands — is byte-identical, `pack init` and
+  `source init` still work as typed, a declined confirmation still exits 0
+  and records `declined`, and every deliverable byte and the C-CDA corpus pin
+  are unmoved.
+
+- **Both Teach modes run on one scaffold in the browser.** `packgen.js` and
+  `source.js` wrote the same two-step gate twice — hold the look button from
+  the click to the run's terminal event, fetch the result the controller
+  stashed, route it, and wrap the analyze click. `gui/web/learn.js` is that
+  gate once; a descriptor carries the stage, the two ids the markup does not
+  spell from the mode name, the two bridge calls, the sentences and the
+  painters. What genuinely differs stays with the mode that owns it: the
+  layout's caveat and its re-ask for the layout lists, and the format's
+  mapping table, its three anchored refusals and its review argument. So does
+  the one behaviour they never shared — an error event banners its own
+  sentence for the layout, which has nothing to point at, and fetches the
+  stash for the format, which does. `anast doctor` asks after the new script
+  by name. Five browser tests close gaps the shared code leaned on and nothing
+  drove: both error paths, a start the controller refuses, the format mode's
+  own missing-field words, and the display name on the wire.
+
+- **The counts and the not-yet-begun run are each spelled out once.**
+  `app.js` carried a byte-identical copy of the shell's `countsText`, its own
+  comment saying so; the activity strip and the Charts rail read the same
+  event and now read it through the same function. Charts and Migrate each
+  wrote out the same ordering rule around a run asked for but not started —
+  the click answers at once, the last run's results stay until this run has
+  its own, and the reset happens on the run's first event so a late reset
+  cannot wipe what an earlier one set. The rule is stated once in the shell
+  now; each view says only what it saves and what it puts back.
+
+- **Teach-a-format and teach-a-layout are one learn capability.** Both flows
+  were already analyze → confirm → emit and said so in their own docstrings,
+  so `commands/packinit.py` and `commands/source_init_command.py` are now
+  `commands/learn.py`: one `LearnCommand` carrying the kind, one `LearnResult`,
+  one name refusal against one registry argument, one confirm gate, one place
+  each arm's writer is released from. What genuinely differs stays behind the
+  kind rather than being flattened — one example file against N sample PDFs,
+  the format's per-item review step, three atomic files against six draft
+  files, the pack trust store against `source_trust.json`, the format's
+  in-process `register()`, and the layout's removal of a draft whose hash it
+  could not record. `pack init` and `source init` are unchanged as typed: the
+  whole CLI help surface diffs clean, and so do the wire keys the two GUI
+  wizard pages read. Three fields that were two names for one thing are one —
+  `written_dir`, `review_md`, `learned_name`.
+
+- **The draft pack's markup lives in template files.** `packgen/emit.py` built
+  a Jinja template out of an f-string, so every brace the draft needed was
+  written twice and every brace the f-string needed twice more. `template.html`,
+  `DRAFT.md` with its OCR block, `OCR_EVIDENCE.md` and `UNPLACED.txt` now come
+  from `packgen/templates/` and fill `$name` placeholders, which cannot collide
+  with a Jinja delimiter at all; the `E501` exemption `emit.py` carried for its
+  long markup lines went with them, and `_comment_safe`, which had no caller
+  anywhere, is gone. Every emitted byte is unchanged across a multi-sample
+  draft, a single-sample one, one carrying Jinja delimiters in its sample text
+  and an OCR batch. `anast doctor` asks after the templates now, because a
+  build that dropped them would otherwise refuse only at the end of a teach,
+  after the samples had been read.
+
+- **A half-written draft is not a draft.** The six writers in `emit_draft_pack`
+  went through plain `write_text`; they go through `core/atomic` now, like
+  every other writer rule 14 covers. `DRAFT.md` is the file that tells the
+  operator this draft may hold their own patients' values — the same-patient
+  caveat is its second heading — and a copy that stops mid-sentence withholds
+  that warning while looking complete.
+
+- **A trust hash gates execution, not editing** (new rule 111). A pack whose
+  content hash changed is unavailable because its `context.py` is code the
+  renderer would run; a learned mapping whose `source_trust.json` hash no
+  longer matches still loads and warns by name, because `mapping.json` is data
+  that every load re-validates against the closed target and transform sets,
+  and refining it by hand is exactly what `anast source init` prints as the
+  next step. The asymmetry was a standing audit finding; it is now a written
+  rule with a test on each side.
+
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
   `destinations`, `packgen` and `gui`: the command layer living where the
@@ -699,6 +864,35 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two files whose names sanitize alike could take one delivered slot.** Every
+  deliverer claims each delivered name against a per-pass ledger before it
+  copies, so a second claimant raises rather than writing over the first. That
+  claim had no test: a mutation that dropped it left the whole suite green,
+  which means `lab report.pdf` and `lab+report.pdf` — two files in a charts
+  directory, one delivered name — could have landed as one file the FHIR bundle
+  still carried two references to. Guarded now from both sides, the charts and
+  the carried documents.
+
+- **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
+  carries five lists that FHIR has no resource for, and the exporter stashed
+  three of them on the Patient resource while the importer read the same three
+  back. `health_concerns` and `screening_events` were in neither list, so a
+  Practice Fusion / Tebra export carrying a health concern or a screening
+  worksheet — the adapter populates both — lost it on every archive, bundle
+  and FHIR-API delivery, silently. None of the five committed fixtures carries
+  either, which is why no test and no snapshot saw it. The five lists are one
+  table now, and the new guard walks `PatientRecord`'s own annotations rather
+  than that table, so a sixth list added later is covered the day it lands.
+
+- **A document with an empty mime type came back as a different type.** FHIR
+  prunes an empty `Attachment.contentType`, so nothing distinguished "no type
+  stated" from "type stated as empty"; the exporter's model default is
+  `application/pdf` and the importer's read fallback `application/octet-stream`,
+  and the round trip quietly swapped one for the other. The lossless tail now
+  carries the mime type in exactly that case — no other value's bytes change —
+  and a bundle from a foreign system, which has neither, still reads as
+  `application/octet-stream` rather than guessing PDF.
 
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus

@@ -160,8 +160,7 @@ def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -
     from datetime import date
 
     from anastomosis.core.model import Patient, PatientRecord
-    from anastomosis.deliver.archive import ArchiveDeliverer
-    from anastomosis.deliver.bundle import BundleDeliverer
+    from anastomosis.deliver.archive import ArchiveDeliverer, Grouping
 
     def _record(pid: str, dob: date) -> PatientRecord:
         return PatientRecord(
@@ -191,8 +190,10 @@ def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -
 
     # Bundle: both patients deliver with zero PDFs (no unattributed slot,
     # never a guess).
-    bundle_results = BundleDeliverer().deliver_records(
-        [rec_a, rec_b], pdfs_dir, tmp_path / "bundles"
+    bundle_results = (
+        ArchiveDeliverer(grouping=Grouping.BUNDLE)
+        .deliver([rec_a, rec_b], pdfs_dir, tmp_path / "bundles")
+        .patients
     )
     for result in bundle_results:
         assert result.pdf_paths == [], (
@@ -294,3 +295,32 @@ def test_a_self_conflicting_index_on_disk_fails_closed(
     # The filename embeds a patient name and a date of service; the log names
     # the index, not the chart.
     assert all("Twin.pdf" not in msg for msg in conflicts)
+
+
+def test_the_engine_writes_no_index_rather_than_a_conflicting_one(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The allocator widens names until one is free, so a run cannot produce
+    this; the branch is the last place an allocator bug would be caught, and
+    an index mapping two encounters to one chart would hide it again."""
+    import logging
+
+    from anastomosis.reconstruct.engine import ReconstructionEngine, RenderedDoc, RenderResult
+
+    twin = tmp_path / "Twin.pdf"
+    result = RenderResult(
+        rendered=[twin, twin],
+        documents=[
+            RenderedDoc(twin, encounter_id="encA", patient_id="aaaa-0001"),
+            RenderedDoc(twin, encounter_id="encB", patient_id="aaaa-0001"),
+        ],
+    )
+    with caplog.at_level(logging.ERROR, logger="anastomosis.reconstruct.engine"):
+        ReconstructionEngine._write_render_index(tmp_path, result)
+
+    assert not (tmp_path / INDEX_FILENAME).exists(), (
+        "a self-conflicting index must not be written: readers trust it for attribution"
+    )
+    refusals = [rec.message for rec in caplog.records if "self-conflict" in rec.message]
+    assert refusals, "the refusal must be logged loudly, never silent"
+    assert all("Twin.pdf" not in msg for msg in refusals)

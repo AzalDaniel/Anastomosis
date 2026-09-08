@@ -1117,8 +1117,7 @@ def test_two_records_under_one_id_that_reach_a_deliverer_collide(tmp_path: Path)
     is loud, never a silent overwrite."""
     from anastomosis.core.model import Patient, PatientRecord
     from anastomosis.deliver._shared import DeliveredNameCollision
-    from anastomosis.deliver.archive import ArchiveDeliverer
-    from anastomosis.deliver.bundle import BundleDeliverer
+    from anastomosis.deliver.archive import ArchiveDeliverer, Grouping
     from anastomosis.deliver.ccda_export import deliver_ccda
 
     records = [
@@ -1133,7 +1132,7 @@ def test_two_records_under_one_id_that_reach_a_deliverer_collide(tmp_path: Path)
     with pytest.raises(DeliveredNameCollision, match="patient directory"):
         ArchiveDeliverer().deliver(records, None, tmp_path / "arc")
     with pytest.raises(DeliveredNameCollision, match="patient directory"):
-        BundleDeliverer().deliver_records(records, None, tmp_path / "bun")
+        ArchiveDeliverer(grouping=Grouping.BUNDLE).deliver(records, None, tmp_path / "bun")
 
 
 def test_the_collision_names_the_shared_id_as_a_surrogate_only(tmp_path: Path) -> None:

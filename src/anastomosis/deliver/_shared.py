@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_copy, atomic_write_text
@@ -28,6 +28,7 @@ __all__ = [
     "budgeted_copy_name",
     "claim_delivered_name",
     "copy_claimed_chart",
+    "copy_claimed_charts",
     "copy_delivered_file",
     "measure_delivered_attachment",
     "measured_attachment",
@@ -170,3 +171,24 @@ def copy_delivered_file(source: Path, destination: Path) -> str | None:
     except OSError as exc:
         return exc_tag(exc)
     return None
+
+
+def copy_claimed_charts(
+    target_dir: Path, sources: Iterable[tuple[str, Path]], *, kind: str
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Budget, claim and copy each ``(source name, file)`` into ``target_dir``.
+
+    Returns ``({source name: delivered name}, [(source name, failure tag)])``.
+    One claim ledger per pass: two sources that would take one delivered name
+    raise rather than the second landing on the first."""
+    claims: dict[str, str] = {}
+    delivered: dict[str, str] = {}
+    failures: list[tuple[str, str]] = []
+    for name, source in sources:
+        landed, failure = copy_claimed_chart(target_dir, claims, source, name, kind=kind)
+        if failure is not None:
+            failures.append((name, failure))
+            continue
+        assert landed is not None  # copy_claimed_chart: no failure => a name
+        delivered[name] = landed
+    return delivered, failures

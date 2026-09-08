@@ -25,6 +25,7 @@ __all__ = [
     "SLOT_GUIDANCE",
     "CdpSelectorValidator",
     "SelectorValidator",
+    "attach_selector_validator",
     "registry_overlay_snippet",
     "write_selectors",
 ]
@@ -88,6 +89,18 @@ class CdpSelectorValidator:
         return len(self._page.query_selector_all_text(selector))
 
 
+def attach_selector_validator(cdp_url: str) -> SelectorValidator:
+    """Contract: attach over CDP to the operator's open browser (loopback only)
+    and return a :class:`CdpSelectorValidator` over its first page."""
+    # Playwright loads here, not at import; the one-shot leaves teardown to exit.
+    from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
+    from anastomosis.destinations.browserpack import PlaywrightPageAdapter
+
+    _playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
+    page = browser.contexts[0].pages[0]
+    return CdpSelectorValidator(PlaywrightPageAdapter(page))
+
+
 def _render_selectors_yaml(
     name: str, selectors: Mapping[str, str], *, now: datetime | None = None
 ) -> str:
@@ -143,12 +156,9 @@ def write_selectors(
 
 
 def registry_overlay_snippet(name: str) -> str:
-    """The printed registry-overlay snippet flipping ``name`` to the browser pack.
-
-    ``registry.yaml`` is the single routing truth and is NEVER
-    auto-modified; the operator pastes this into their own ``--registry``
-    overlay.
-    """
+    """The printed registry-overlay snippet flipping ``name`` to the browser
+    pack. ``registry.yaml`` is the single routing truth and is NEVER
+    auto-modified; the operator pastes this into their own ``--registry`` overlay."""
     return (
         "entries:\n"
         f"  {name}:\n"

@@ -7,6 +7,7 @@ module both depend on rather than being mirrored by hand in two files.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from urllib.parse import quote
 from uuid import NAMESPACE_URL, uuid5
 
@@ -35,10 +36,12 @@ __all__ = [
     "OID_SNOMED",
     "OID_SSN",
     "SDTC",
+    "SECTION_BY_CODE",
     "SECTION_CODE_UNKNOWN",
     "TPL_SEVERITY",
     "V3",
     "XSI",
+    "SectionSpec",
     "first_rooted_id",
     "organizer_component_source_id",
 ]
@@ -73,6 +76,102 @@ LOINC_RESULTS = "30954-2"
 LOINC_SOCIAL = "29762-2"
 LOINC_ENCOUNTERS = "46240-8"
 LOINC_NOTES = "34109-9"
+
+
+@dataclass(frozen=True)
+class SectionSpec:
+    """One section's identity, stated once for both halves (84): the reader
+    dispatches on ``loinc`` and finds each statement at ``entry_path``; the
+    writer names the section from ``title`` and ``display_name``, opens each
+    entry as ``entry_tag``, and stamps ``entry_template`` on it. Checked
+    against the C-CDA reference under ``tests/fixtures/ccda``."""
+
+    loinc: str
+    title: str
+    display_name: str
+    entry_tag: str
+    entry_template: tuple[str, str] | None
+
+    @property
+    def entry_path(self) -> str:
+        """The reader's path from an ``<entry>`` to the statement inside it."""
+        return f"v3:{self.entry_tag}"
+
+
+#: The nine sections this toolkit reads structurally and writes back, keyed by
+#: the code that names each, in the order the writer emits them. A section code
+#: absent here is captured as foreign narrative rather than parsed.
+SECTION_BY_CODE: dict[str, SectionSpec] = {
+    spec.loinc: spec
+    for spec in (
+        SectionSpec(
+            loinc=LOINC_PROBLEMS,
+            title="Problems",
+            display_name="Problem List",
+            entry_tag="act",
+            entry_template=("2.16.840.1.113883.10.20.22.4.3", "2015-08-01"),
+        ),
+        SectionSpec(
+            loinc=LOINC_ALLERGIES,
+            title="Allergies",
+            display_name="Allergies and Adverse Reactions",
+            entry_tag="act",
+            entry_template=("2.16.840.1.113883.10.20.22.4.30", "2015-08-01"),
+        ),
+        SectionSpec(
+            loinc=LOINC_MEDICATIONS,
+            title="Medications",
+            display_name="History of Medication Use",
+            entry_tag="substanceAdministration",
+            entry_template=("2.16.840.1.113883.10.20.22.4.16", "2014-06-09"),
+        ),
+        SectionSpec(
+            loinc=LOINC_IMMUNIZATIONS,
+            title="Immunizations",
+            display_name="History of Immunizations",
+            entry_tag="substanceAdministration",
+            entry_template=("2.16.840.1.113883.10.20.22.4.52", "2015-08-01"),
+        ),
+        # The two organizer sections stamp no entry template, though the
+        # reference under tests/fixtures/ccda does. Stating one would change a
+        # delivered byte, so the divergence is declared here and asserted.
+        SectionSpec(
+            loinc=LOINC_VITALS,
+            title="Vital Signs",
+            display_name="Vital Signs",
+            entry_tag="organizer",
+            entry_template=None,
+        ),
+        SectionSpec(
+            loinc=LOINC_RESULTS,
+            title="Results",
+            display_name="Relevant Diagnostic Tests and/or Laboratory Data",
+            entry_tag="organizer",
+            entry_template=None,
+        ),
+        SectionSpec(
+            loinc=LOINC_SOCIAL,
+            title="Social History",
+            display_name="Social History",
+            entry_tag="observation",
+            entry_template=("2.16.840.1.113883.10.20.22.4.78", "2014-06-09"),
+        ),
+        SectionSpec(
+            loinc=LOINC_ENCOUNTERS,
+            title="Encounters",
+            display_name="History of Encounters",
+            entry_tag="encounter",
+            entry_template=("2.16.840.1.113883.10.20.22.4.49", "2015-08-01"),
+        ),
+        SectionSpec(
+            loinc=LOINC_NOTES,
+            title="Notes",
+            display_name="Note",
+            entry_tag="act",
+            entry_template=("2.16.840.1.113883.10.20.22.4.202", "2016-11-01"),
+        ),
+    )
+}
 
 # Not structurally parsed. The builder uses 51899-3 as the declared home for
 # source fields CDA has no slot for; the parser captures a section STAMPED as
