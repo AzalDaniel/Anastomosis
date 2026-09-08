@@ -251,10 +251,8 @@ The audited suppression sites are exactly:
 - `src/anastomosis/deliver/_shared.py` (the per-patient FHIR bundle, written
   the same way by every file-writing deliverer) —
   `py/clear-text-storage-sensitive-data`
-- `src/anastomosis/deliver/archive/archive.py` (archive index) —
-  `py/clear-text-storage-sensitive-data`
-- `src/anastomosis/deliver/bundle/bundle.py` (bundle README) —
-  `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/archive/archive.py` (archive index; the per-patient
+  README of the bundle grouping) — `py/clear-text-storage-sensitive-data`
 - `src/anastomosis/deliver/ccda_export/deliverer.py` (a patient's own scanned
   document, written beside the C-CDA that references it so the deliverable
   carries the chart the source held) — `py/clear-text-storage-sensitive-data`

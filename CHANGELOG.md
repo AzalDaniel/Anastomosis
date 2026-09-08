@@ -579,6 +579,54 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The Practice Fusion pack keeps only what is its own.** `packs/
+  practice_fusion_soap/context.py` was 1,090 lines, and most of them were a
+  view layer any pack rendering a chart would write the same way: the date and
+  time formatters, the vitals LOINC-to-label table with its blood-pressure fold
+  and its two row builders, the record-level groupings, the flowsheet, the
+  entity rows (diagnosis, allergy, concern, screening, immunization, addendum),
+  the guarantor and payment cells, and the pack logo resolver. They live in
+  `reconstruct/packctx.py` now, the surface a pack reaches through the sandbox
+  allowlist, and the pack is 500 lines of what is PF's alone: the ESCRIPT line,
+  the insurance and demographics grids (both read `pf_tebra:`-namespaced
+  columns, so neither may live in a module that must not know a source
+  adapter's namespace), the seventeen social-history sub-categories, the
+  section flags, and the notice a section prints when this layout cannot
+  reconstruct it. The 35-section replica is unchanged, and the committed
+  goldens — page geometry, text layer and every word box — prove it: the
+  rendered PDFs are the same bytes.
+
+  This is the one file the prose sweep skipped, because a pack's layout hash
+  covers every byte of every file in it. That hash therefore moves, once and
+  deliberately: `5b84f853…` becomes `29d72b52…`. Nothing else moves with it.
+  The five snapshot fixtures render through `generic_soap`, whose bytes are
+  untouched, so `tools/snapshot.py` passes without a regenerated baseline —
+  including the `render_provenance.json` and `upload_manifest.json` it
+  captures. The complexity ratchet was re-pinned for exactly the seven blocks
+  that changed file: same rank, same number, one of them three lower, and
+  whole-`src` cyclomatic complexity falls from 7,192 to 7,189.
+
+- **One deliverer writes both file trees.** The offline archive and the
+  per-patient bundle were the same operation written twice: claim a patient
+  directory name against a per-run ledger, copy the documents that patient's
+  record names, write their FHIR bundle, copy the charts the render index
+  attributes to them. What differs is where the directory sits and what sits
+  beside it — a cross-patient search index and HTML pages, or a QA slice and
+  the patient's own README — so that is what `grouping=` now says, as a two-row
+  layout table rather than a flag read in four places. The four budget-claim-copy
+  loops (two per deliverer) are one `copy_claimed_charts` in
+  `deliver/_shared.py`, and the two README mechanisms are one. `BundleResult`
+  survives unchanged as the per-patient row and now rides on `ArchiveResult`,
+  which is how `anast pipeline run --bundle` reports its counts;
+  `anastomosis.deliver.bundle` re-exports from the merged module. Two entry
+  points go: `BundleDeliverer.deliver_records`, and `BundleDeliverer.deliver`,
+  the single-record form that existed so `deliver_records` could pass its own
+  claim ledger into it. Every delivered byte is unchanged — `tools/snapshot.py`
+  passes and the corpus pin has not moved. One behaviour is deliberately
+  unified: a bundle run now logs the same warning the archive already did when
+  a record names a document the charts directory does not hold, where it used
+  to be silent.
+
 - **One FHIR field table, walked in both directions.** `core/fhir/export.py`
   and `core/fhir/ingest.py` each named the same twelve entities and stated
   every field's identity twice — model attribute, tail key, converter — so a
@@ -605,49 +653,6 @@ issue and fixed in its own pull request.
   keys, which is what catches a row moved on both sides at once. Dead code
   cut: `sources/fhir_r4/mapper.py`'s `_code_in` had no caller anywhere in
   `src/`, `tests/` or `tools/`.
-
-- **QA and the verification ladder go flat.** The engine checks were a
-  registry with one writer and one reader: `checks.py` registered seven
-  checks in a loop, `base.py` sorted them back out, and a duplicate-name
-  guard stood between them over a name that could only be written once.
-  `ENGINE_CHECKS` is the seven, in the name order every `qa_report.json`
-  lists them in; the `QACheck` protocol stays, because `run_qa(checks=...)`
-  — the extension point a pack actually uses — is typed with it.
-  `wholepatient.py` stated the same shape twice, one table of the checks a
-  whole-patient document can answer and one of the checks it records as
-  skipped, with only a test holding the pair to covering every check
-  between them; `WHOLE_PATIENT_SCOPE` places each check once, and the run
-  list reads that table by name, so a check nobody has placed raises
-  instead of falling quietly out of the report. The seven L0-L6 levels were
-  classes whose only state was their own level id, and are seven functions;
-  L6's tier-2 identity re-assertion is its own function, so
-  `deliver/verify/levels.py` leaves the complexity baseline with no
-  violating block at all rather than carrying its old C/12 in under a new
-  name. Nothing a check or a level says changed: every level body is
-  AST-identical to the method it replaced, the five fixtures are
-  byte-identical (`tools/snapshot.py`), and a real two-document export
-  writes the same `qa_report.json` to the byte. Neutering each of the seven
-  checks and each of the seven levels in a scratch copy turns a named test
-  red. The corpus pin is unmoved, the guard count holds at 72, and neither
-  gate baseline needed regenerating.
-
-- **Two package `__init__` files stopped re-exporting.** `deliver/browser`
-  eagerly imported thirty-seven names out of eleven submodules and
-  `destinations` twenty-six out of four, so taking one name took all of them:
-  importing `deliver.browser.persist` — the manifest writer `anast upload`
-  reads long after the render run — opened the SQLite ledger, the upload
-  engine, the CDP client and the destination pack adapter along with it.
-  Nothing imported through either package: no `from anastomosis.deliver.browser
-  import ...` and no `from anastomosis.destinations import ...` anywhere in
-  `src`, `tests` or `tools`, and no attribute path through either. Both are
-  now the docstring that states their contract, with no `__getattr__` and no
-  other lazy machinery standing in for the re-exports.
-  `deliver.browser.persist` costs 64 `anastomosis` modules instead of 75 and
-  stops opening `sqlite3`; `deliver.verify` costs 31 instead of 75 and stops
-  opening `sqlite3`, `jinja2` and `lxml` alike. Importing the CLI is unchanged
-  at 20 modules, which was never where this cost sat. Two tests in
-  `tests/unit/test_import_boundaries.py` hold both packages down, each naming
-  the module that leaked and the import that put it back.
 
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
@@ -738,6 +743,15 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two files whose names sanitize alike could take one delivered slot.** Every
+  deliverer claims each delivered name against a per-pass ledger before it
+  copies, so a second claimant raises rather than writing over the first. That
+  claim had no test: a mutation that dropped it left the whole suite green,
+  which means `lab report.pdf` and `lab+report.pdf` — two files in a charts
+  directory, one delivered name — could have landed as one file the FHIR bundle
+  still carried two references to. Guarded now from both sides, the charts and
+  the carried documents.
 
 - **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
   carries five lists that FHIR has no resource for, and the exporter stashed

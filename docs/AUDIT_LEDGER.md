@@ -349,6 +349,9 @@ Most `except` clauses in the tree are a documented fail-closed or a documented d
 
 15. **A learned mapping and a template pack answer one question two ways.** A pack whose content hash changed is unavailable until re-trusted (rule 22); a learned mapping whose `source_trust.json` hash mismatches after review only warns and still loads (`sources/learned/__init__.py`). Rule 87 says one answer. Decide in S-6 with the learn capability.
 
+18. **`packs/generic_soap/context.py` still spells `%B %d, %Y` inline**, the second occurrence of `packctx.format_date_long`. Changing it moves the `generic_soap` layout hash, which is the hash `tools/snapshot_baseline.json` captures in every `render_provenance.json`, so it belongs in a slice that re-pins the snapshot deliberately — not in S-5, which re-pinned only the PF pack's. Recorded so the duplicate is not mistaken for an oversight.
+19. **`_demographics` and `_coverage_view` stay in the PF pack**, against S-5's merge map, because each reads a `pf_tebra:`-namespaced extension key and `reconstruct/packctx.py`'s contract is to depend on nothing but the canonical model. Moving them would put a source adapter's column names (`DeathDate`, `OfficePhoneExtension`, `InsurancePaymentType`) into a module that must not know them. Their CC 17 each stays in the pack; everything they call moved.
+
 ## 12. Rules the prose was protecting
 
 Absorbed into `docs/RULES.md` before S-1 deletes the docstrings that held them. Source file:line → rule number.

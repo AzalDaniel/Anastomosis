@@ -1,5 +1,5 @@
-"""Bundle deliverer — see :mod:`.bundle` for the contract."""
+"""Per-patient bundle grouping — the merged deliverer's other layout."""
 
-from .bundle import BundleDeliverer, BundleResult
+from anastomosis.deliver.archive.archive import ArchiveDeliverer, BundleResult, Grouping
 
-__all__ = ["BundleDeliverer", "BundleResult"]
+__all__ = ["ArchiveDeliverer", "BundleResult", "Grouping"]
