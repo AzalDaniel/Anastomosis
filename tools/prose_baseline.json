@@ -762,12 +762,12 @@
       "total": 19
     },
     "src/anastomosis/gui/__main__.py": {
-      "blank": 14,
-      "code": 30,
+      "blank": 17,
+      "code": 49,
       "comment": 3,
-      "docstring": 14,
-      "ratio": 0.361702,
-      "total": 61
+      "docstring": 19,
+      "ratio": 0.309859,
+      "total": 88
     },
     "src/anastomosis/gui/consoles/__init__.py": {
       "blank": 3,
@@ -842,12 +842,12 @@
       "total": 152
     },
     "src/anastomosis/gui/shared.py": {
-      "blank": 16,
-      "code": 69,
+      "blank": 17,
+      "code": 72,
       "comment": 5,
       "docstring": 14,
-      "ratio": 0.215909,
-      "total": 104
+      "ratio": 0.208791,
+      "total": 108
     },
     "src/anastomosis/gui/shell.py": {
       "blank": 32,
@@ -1298,12 +1298,12 @@
       "total": 184
     },
     "tests/gui_e2e/test_bridge_surface.py": {
-      "blank": 26,
-      "code": 61,
+      "blank": 28,
+      "code": 69,
       "comment": 5,
-      "docstring": 29,
-      "ratio": 0.357895,
-      "total": 121
+      "docstring": 31,
+      "ratio": 0.342857,
+      "total": 133
     },
     "tests/gui_e2e/test_calendar.py": {
       "blank": 26,
@@ -1882,12 +1882,12 @@
       "total": 217
     },
     "tests/unit/test_gui_shell.py": {
-      "blank": 51,
-      "code": 106,
+      "blank": 55,
+      "code": 118,
       "comment": 4,
-      "docstring": 29,
-      "ratio": 0.23741,
-      "total": 190
+      "docstring": 31,
+      "ratio": 0.228758,
+      "total": 208
     },
     "tests/unit/test_guide.py": {
       "blank": 153,
@@ -2386,12 +2386,12 @@
       "total": 149
     },
     "tests/unit/test_selfcheck.py": {
-      "blank": 21,
-      "code": 59,
+      "blank": 26,
+      "code": 73,
       "comment": 6,
-      "docstring": 17,
-      "ratio": 0.280488,
-      "total": 103
+      "docstring": 19,
+      "ratio": 0.255102,
+      "total": 124
     },
     "tests/unit/test_smoke_windows_liveness.py": {
       "blank": 27,
@@ -3333,12 +3333,12 @@
   ],
   "packages": {
     "anastomosis": {
-      "blank": 5635,
-      "code": 27337,
+      "blank": 5639,
+      "code": 27359,
       "comment": 3126,
-      "docstring": 6214,
-      "ratio": 0.254656,
-      "total": 42312
+      "docstring": 6219,
+      "ratio": 0.254604,
+      "total": 42343
     },
     "tests.e2e": {
       "blank": 186,
@@ -3349,12 +3349,12 @@
       "total": 1030
     },
     "tests.gui_e2e": {
-      "blank": 847,
-      "code": 3066,
+      "blank": 849,
+      "code": 3074,
       "comment": 294,
-      "docstring": 529,
-      "ratio": 0.211623,
-      "total": 4736
+      "docstring": 531,
+      "ratio": 0.211593,
+      "total": 4748
     },
     "tests.integration": {
       "blank": 37,
@@ -3365,21 +3365,21 @@
       "total": 225
     },
     "tests.unit": {
-      "blank": 10120,
-      "code": 37802,
+      "blank": 10129,
+      "code": 37828,
       "comment": 2865,
-      "docstring": 5376,
-      "ratio": 0.178985,
-      "total": 56163
+      "docstring": 5380,
+      "ratio": 0.178955,
+      "total": 56202
     }
   },
   "repo": {
-    "blank": 16825,
-    "code": 69001,
+    "blank": 16840,
+    "code": 69057,
     "comment": 6388,
-    "docstring": 12252,
-    "ratio": 0.212686,
-    "total": 104466
+    "docstring": 12263,
+    "ratio": 0.212649,
+    "total": 104548
   },
   "tool": "tools/prose_gate.py"
 }

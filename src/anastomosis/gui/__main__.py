@@ -8,6 +8,7 @@ surfaces as a clean message + non-zero exit, never a traceback.
 from __future__ import annotations
 
 import sys
+import traceback
 
 
 def _self_check() -> int:
@@ -28,6 +29,32 @@ def _self_check() -> int:
         print(f"{failed} asset check(s) failed")
         return 1
     print(f"all {len(result.checks)} asset checks passed")
+    return _self_check_info(glyphs)
+
+
+def _self_check_info(glyphs: object) -> int:
+    """Prove ``info()`` answers — the dashboard paints nothing until it does,
+    and it reaches every source adapter and pack context, which the asset
+    checks do not. Printed, not logged: RULES.md 2 bars a traceback from a
+    log, and this call has no record in scope to leak.
+    """
+    from anastomosis.commands.run import get_toolkit_info
+
+    ok_mark = getattr(glyphs, "ok", "+")
+    fail_mark = getattr(glyphs, "fail", "x")
+    try:
+        toolkit = get_toolkit_info()
+    except Exception:
+        print(f"  {fail_mark} toolkit info: raised")
+        traceback.print_exc()
+        return 1
+    print(
+        f"  {ok_mark} toolkit info: {toolkit.version}, "
+        f"{len(toolkit.sources)} source(s), {len(toolkit.packs)} pack(s)"
+    )
+    if not toolkit.sources or not toolkit.packs:
+        print("toolkit info answered with no sources or no packs")
+        return 1
     return 0
 
 

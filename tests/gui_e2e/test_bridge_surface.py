@@ -119,3 +119,15 @@ def test_offline_charts_does_not_claim_a_run_is_in_flight(gui) -> None:
     run_button = app.page.locator("#charts-run")
     assert run_button.is_disabled()
     assert (run_button.text_content() or "").strip() == "Rebuild charts"
+
+
+def test_a_toolkit_that_will_not_answer_is_said_out_loud(gui) -> None:
+    """An info() that comes back not-ok returned quietly, leaving a dashboard
+    that looked healthy and carried no version, no sources and no layouts."""
+    canned = dict(canned_returns())
+    canned["info"] = {"ok": False, "error": "ModuleNotFoundError"}
+    app = gui(canned=canned)
+    banner = app.page.locator("#banner-text").inner_text().strip()
+    assert "ModuleNotFoundError" in banner, banner
+    assert "show" in (app.page.locator("#banner").get_attribute("class") or "")
+    assert app.page.locator("#about-version").get_attribute("data-version") == ""
