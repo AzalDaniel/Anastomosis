@@ -19,15 +19,15 @@ from anastomosis.core.model import Encounter, Patient  # noqa: E402
 from anastomosis.core.timeutil import all_date_spellings  # noqa: E402
 from anastomosis.deliver.browser.errors import WrongPatientError  # noqa: E402
 from anastomosis.deliver.verify.levels import (  # noqa: E402
-    L0FileIntegrity,
-    L1PageAndSize,
-    L2IdentityText,
-    L3HeaderFields,
-    L4Banner,
-    L5Metadata,
-    L6RoundTrip,
     LevelStatus,
     fuzzy_contains,
+    l0_file_integrity,
+    l1_page_and_size,
+    l2_identity_text,
+    l3_header_fields,
+    l4_banner,
+    l5_metadata,
+    l6_round_trip,
 )
 from anastomosis.destinations.base import DestinationPatient, UploadItem  # noqa: E402
 from anastomosis.reconstruct.packs import LoadedPack, PackManifest  # noqa: E402
@@ -149,7 +149,7 @@ def test_fuzzy_contains_rejects_short_name_embedded_in_longer_name() -> None:
     assert fuzzy_contains("Ann Li", "Seen today: Ann Li.") == 1.0
 
 
-# The alternate-rendering probes L2IdentityText's docstring cites as the
+# The alternate-rendering probes l2_identity_text's docstring cites as the
 # justification for the 0.88 threshold: (label, needle, page-1 text, ratio).
 # Their RATIOS are pinned, not just their side of the threshold — the number is
 # what the module documents, and a matcher change that moved them (a wider
@@ -208,7 +208,7 @@ def test_fuzzy_contains_window_is_token_anchored_across_a_long_page() -> None:
 
 
 def test_l0_passes_on_intact_file(tmp_path: Path) -> None:
-    result = L0FileIntegrity().run(_good_item(tmp_path))
+    result = l0_file_integrity(_good_item(tmp_path))
     assert result.level == "L0"
     assert result.status is LevelStatus.PASS
 
@@ -216,7 +216,7 @@ def test_l0_passes_on_intact_file(tmp_path: Path) -> None:
 def test_l0_fails_missing_file(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
     item.file_path.unlink()
-    result = L0FileIntegrity().run(item)
+    result = l0_file_integrity(item)
     assert result.status is LevelStatus.FAIL
     assert result.detail == "file missing"
 
@@ -224,7 +224,7 @@ def test_l0_fails_missing_file(tmp_path: Path) -> None:
 def test_l0_fails_on_tampered_bytes(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
     item.file_path.write_bytes(b"tampered-different-bytes-entirely")
-    result = L0FileIntegrity().run(item)
+    result = l0_file_integrity(item)
     assert result.status is LevelStatus.FAIL
     # Size differs first here, so the size detail wins; either is a FAIL.
     assert "mismatch" in result.detail
@@ -235,7 +235,7 @@ def test_l0_works_without_pymupdf(tmp_path: Path) -> None:
     p = tmp_path / "plain.bin"
     p.write_bytes(b"not a pdf but intact")
     item = _item(p)
-    assert L0FileIntegrity().run(item).status is LevelStatus.PASS
+    assert l0_file_integrity(item).status is LevelStatus.PASS
 
 
 # --- L1 page count + size ---
@@ -243,7 +243,7 @@ def test_l0_works_without_pymupdf(tmp_path: Path) -> None:
 
 def test_l1_passes(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
-    result = L1PageAndSize().run(item)
+    result = l1_page_and_size(item)
     assert result.status is LevelStatus.PASS
 
 
@@ -259,15 +259,15 @@ def test_l1_fails_sub_kib(tmp_path: Path) -> None:
         sha256=item.sha256,
         size_bytes=512,
     )
-    result = L1PageAndSize().run(tiny)
+    result = l1_page_and_size(tiny)
     assert result.status is LevelStatus.FAIL
     assert "floor" in result.detail
 
 
 def test_l1_expected_pages_match_and_mismatch(tmp_path: Path) -> None:
     item = _item(_make_pdf(tmp_path / "two.pdf", GOOD_PAGE_LINES, pages=2))
-    assert L1PageAndSize().run(item, expected_pages=2).status is LevelStatus.PASS
-    bad = L1PageAndSize().run(item, expected_pages=3)
+    assert l1_page_and_size(item, expected_pages=2).status is LevelStatus.PASS
+    bad = l1_page_and_size(item, expected_pages=3)
     assert bad.status is LevelStatus.FAIL
     assert "expected 3" in bad.detail
 
@@ -276,7 +276,7 @@ def test_l1_expected_pages_match_and_mismatch(tmp_path: Path) -> None:
 
 
 def test_l2_passes_with_name_and_dob(tmp_path: Path) -> None:
-    result = L2IdentityText().run(_good_item(tmp_path), _patient())
+    result = l2_identity_text(_good_item(tmp_path), _patient())
     assert result.status is LevelStatus.PASS
 
 
@@ -285,7 +285,7 @@ def test_l2_fails_different_patient_name(tmp_path: Path) -> None:
     lines = ["Someone Else Entirely", "DOB 03/04/1975"]
     item = _item(_make_pdf(tmp_path / "other.pdf", lines))
     # Our patient has no DOB so the DOB gate does not pre-empt the name check.
-    result = L2IdentityText().run(item, _patient(birth_date=None))
+    result = l2_identity_text(item, _patient(birth_date=None))
     assert result.status is LevelStatus.FAIL
     assert "ratio" in result.detail
 
@@ -301,7 +301,7 @@ def test_l2_fails_similar_but_wrong_name_in_threshold_band(tmp_path: Path) -> No
     # the name, so trailing text is part of the measured condition).
     band_ratio = fuzzy_contains("Synthia Testpatient", "\n".join(lines))
     assert 0.5 < band_ratio < 0.88, "fixture drifted out of the threshold band"
-    result = L2IdentityText().run(item, patient)
+    result = l2_identity_text(item, patient)
     assert result.status is LevelStatus.FAIL
     assert "ratio" in result.detail
 
@@ -310,13 +310,13 @@ def test_l2_dob_hard_fail_beats_passing_name(tmp_path: Path) -> None:
     # Right name, WRONG DOB on the page: must FAIL even though name ratio = 1.0.
     lines = ["Synthia Testpatient", "DOB 12/31/1965"]
     item = _item(_make_pdf(tmp_path / "wrongdob.pdf", lines))
-    result = L2IdentityText().run(item, _patient())  # patient DOB is 1990-01-02
+    result = l2_identity_text(item, _patient())  # patient DOB is 1990-01-02
     assert result.status is LevelStatus.FAIL
     assert "birth_date" in result.detail
 
 
 def test_l2_skips_when_patient_has_no_name(tmp_path: Path) -> None:
-    result = L2IdentityText().run(
+    result = l2_identity_text(
         _good_item(tmp_path), _patient(given_name=None, family_name=None, birth_date=None)
     )
     assert result.status is LevelStatus.SKIP
@@ -331,11 +331,11 @@ def test_l2_rejects_short_name_and_dob_collision(tmp_path: Path) -> None:
     lines = ["Joann Liang reports well.", "DOB 11/2/1990", *_FILLER]
     item = _item(_make_pdf(tmp_path / "collision.pdf", lines))
     ann_li = Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=DOB)
-    result = L2IdentityText().run(item, ann_li)
+    result = l2_identity_text(item, ann_li)
     assert result.status is LevelStatus.FAIL
     assert "birth_date" in result.detail
     # And with the DOB gate removed, the NAME alone still fails (no 1.0 fast pass).
-    result_name_only = L2IdentityText().run(
+    result_name_only = l2_identity_text(
         item, Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=None)
     )
     assert result_name_only.status is LevelStatus.FAIL
@@ -348,7 +348,7 @@ def test_l3_rejects_short_name_and_dob_collision(tmp_path: Path) -> None:
     lines = ["Joann Liang reports well.", "DOB 11/2/1990", *_FILLER]
     item = _item(_make_pdf(tmp_path / "collision3.pdf", lines))
     ann_li = Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=DOB)
-    result = L3HeaderFields().run(item, ann_li, pack=_pack(["patient_name", "dob"]), encounter=None)
+    result = l3_header_fields(item, ann_li, pack=_pack(["patient_name", "dob"]), encounter=None)
     assert result.status is LevelStatus.FAIL
     assert "patient_name" in result.detail and "dob" in result.detail
 
@@ -358,22 +358,20 @@ def test_l3_rejects_short_name_and_dob_collision(tmp_path: Path) -> None:
 
 def test_l3_passes_for_supported_fields(tmp_path: Path) -> None:
     enc = Encounter(id=ENC_ID, patient_id=PAT_ID, date_of_service=DOS)
-    result = L3HeaderFields().run(
+    result = l3_header_fields(
         _good_item(tmp_path), _patient(), pack=_pack(["patient_name", "dob", "dos"]), encounter=enc
     )
     assert result.status is LevelStatus.PASS
 
 
 def test_l3_empty_list_skips(tmp_path: Path) -> None:
-    result = L3HeaderFields().run(_good_item(tmp_path), _patient(), pack=_pack([]), encounter=None)
+    result = l3_header_fields(_good_item(tmp_path), _patient(), pack=_pack([]), encounter=None)
     assert result.status is LevelStatus.SKIP
     assert result.detail == "no header fields declared"
 
 
 def test_l3_unsupported_field_fails_loud(tmp_path: Path) -> None:
-    result = L3HeaderFields().run(
-        _good_item(tmp_path), _patient(), pack=_pack(["mrn"]), encounter=None
-    )
+    result = l3_header_fields(_good_item(tmp_path), _patient(), pack=_pack(["mrn"]), encounter=None)
     assert result.status is LevelStatus.FAIL
     assert "mrn" in result.detail
 
@@ -383,7 +381,7 @@ def test_l3_missing_dos_field_fails(tmp_path: Path) -> None:
     lines = ["Synthia Testpatient", "DOB 01/02/1990"]
     item = _item(_make_pdf(tmp_path / "nodos.pdf", lines))
     enc = Encounter(id=ENC_ID, patient_id=PAT_ID, date_of_service=DOS)
-    result = L3HeaderFields().run(item, _patient(), pack=_pack(["dos"]), encounter=enc)
+    result = l3_header_fields(item, _patient(), pack=_pack(["dos"]), encounter=enc)
     assert result.status is LevelStatus.FAIL
     assert "dos" in result.detail
 
@@ -400,18 +398,18 @@ class _Banner:
 
 
 def test_l4_skips_without_banner() -> None:
-    result = L4Banner().run(_patient(), banner=None)
+    result = l4_banner(_patient(), banner=None)
     assert result.status is LevelStatus.SKIP
 
 
 def test_l4_passes_on_match() -> None:
-    result = L4Banner().run(_patient(), banner=_Banner(matches=True))
+    result = l4_banner(_patient(), banner=_Banner(matches=True))
     assert result.status is LevelStatus.PASS
 
 
 def test_l4_raises_wrong_patient_on_mismatch() -> None:
     with pytest.raises(WrongPatientError):
-        L4Banner().run(_patient(), banner=_Banner(matches=False))
+        l4_banner(_patient(), banner=_Banner(matches=False))
 
 
 # --- L5 metadata / L6 read-back doubles ---
@@ -443,28 +441,28 @@ class _Reader:
 
 
 def test_l5_skips_without_reader(tmp_path: Path) -> None:
-    result = L5Metadata().run(_good_item(tmp_path), DEST_PATIENT, DOC_ID, reader=None)
+    result = l5_metadata(_good_item(tmp_path), DEST_PATIENT, DOC_ID, reader=None)
     assert result.status is LevelStatus.SKIP
 
 
 def test_l5_passes_on_matching_metadata(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
     reader = _Reader(item.file_path.read_bytes(), page_count=1, size=item.size_bytes)
-    result = L5Metadata().run(item, DEST_PATIENT, DOC_ID, reader=reader)
+    result = l5_metadata(item, DEST_PATIENT, DOC_ID, reader=reader)
     assert result.status is LevelStatus.PASS
 
 
 def test_l5_fails_on_size_mismatch(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
     reader = _Reader(item.file_path.read_bytes(), page_count=1, size=item.size_bytes + 99)
-    result = L5Metadata().run(item, DEST_PATIENT, DOC_ID, reader=reader)
+    result = l5_metadata(item, DEST_PATIENT, DOC_ID, reader=reader)
     assert result.status is LevelStatus.FAIL
 
 
 def test_l5_fails_on_page_count_mismatch(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
     reader = _Reader(item.file_path.read_bytes(), page_count=9, size=item.size_bytes)
-    result = L5Metadata().run(item, DEST_PATIENT, DOC_ID, reader=reader)
+    result = l5_metadata(item, DEST_PATIENT, DOC_ID, reader=reader)
     assert result.status is LevelStatus.FAIL
 
 
@@ -472,14 +470,14 @@ def test_l5_fails_on_page_count_mismatch(tmp_path: Path) -> None:
 
 
 def test_l6_skips_without_reader(tmp_path: Path) -> None:
-    result = L6RoundTrip().run(_good_item(tmp_path), DEST_PATIENT, DOC_ID, reader=None)
+    result = l6_round_trip(_good_item(tmp_path), DEST_PATIENT, DOC_ID, reader=None)
     assert result.status is LevelStatus.SKIP
 
 
 def test_l6_passes_byte_identical(tmp_path: Path) -> None:
     item = _good_item(tmp_path)
     reader = _Reader(item.file_path.read_bytes(), page_count=1, size=item.size_bytes)
-    result = L6RoundTrip().run(item, DEST_PATIENT, DOC_ID, reader=reader)
+    result = l6_round_trip(item, DEST_PATIENT, DOC_ID, reader=reader)
     assert result.status is LevelStatus.PASS
     assert result.detail == "byte-identical read-back"
 
@@ -493,7 +491,7 @@ def test_l6_passes_reprocessed_tier(tmp_path: Path) -> None:
     reprocessed_bytes = reprocessed.read_bytes()
     assert hashlib.sha256(reprocessed_bytes).hexdigest() != item.sha256
     reader = _Reader(reprocessed_bytes, page_count=1, size=len(reprocessed_bytes))
-    result = L6RoundTrip().run(item, DEST_PATIENT, DOC_ID, reader=reader, patient=_patient())
+    result = l6_round_trip(item, DEST_PATIENT, DOC_ID, reader=reader, patient=_patient())
     assert result.status is LevelStatus.PASS
     assert result.detail == "reprocessed"
 
@@ -512,7 +510,7 @@ def test_l6_fails_swapped_chart_with_shared_boilerplate(tmp_path: Path) -> None:
     ]
     swapped = _make_pdf(tmp_path / "swapped.pdf", swapped_lines)
     reader = _Reader(swapped.read_bytes(), page_count=1, size=swapped.stat().st_size)
-    result = L6RoundTrip().run(item, DEST_PATIENT, DOC_ID, reader=reader, patient=_patient())
+    result = l6_round_trip(item, DEST_PATIENT, DOC_ID, reader=reader, patient=_patient())
     assert result.status is LevelStatus.FAIL
 
 
@@ -522,7 +520,7 @@ def test_l6_fails_reprocessed_without_patient_context(tmp_path: Path) -> None:
     item = _good_item(tmp_path, "orig.pdf")
     reprocessed = _make_pdf(tmp_path / "reprocessed.pdf", GOOD_PAGE_LINES)
     reader = _Reader(reprocessed.read_bytes(), page_count=1, size=reprocessed.stat().st_size)
-    result = L6RoundTrip().run(item, DEST_PATIENT, DOC_ID, reader=reader, patient=None)
+    result = l6_round_trip(item, DEST_PATIENT, DOC_ID, reader=reader, patient=None)
     assert result.status is LevelStatus.FAIL
     assert "identity" in result.detail
 
@@ -532,7 +530,7 @@ def test_l6_fails_corrupt_readback(tmp_path: Path) -> None:
     # A different document: different page-1 text and a corrupted tail.
     bad = _make_pdf(tmp_path / "bad.pdf", ["Totally Different Document", "no identity here"])
     reader = _Reader(bad.read_bytes(), page_count=1, size=bad.stat().st_size)
-    result = L6RoundTrip().run(item, DEST_PATIENT, DOC_ID, reader=reader)
+    result = l6_round_trip(item, DEST_PATIENT, DOC_ID, reader=reader)
     assert result.status is LevelStatus.FAIL
 
 
@@ -540,6 +538,6 @@ def test_l6_fails_page_count_differs(tmp_path: Path) -> None:
     item = _good_item(tmp_path, "orig.pdf")
     two = _make_pdf(tmp_path / "two.pdf", GOOD_PAGE_LINES, pages=2)
     reader = _Reader(two.read_bytes(), page_count=2, size=two.stat().st_size)
-    result = L6RoundTrip().run(item, DEST_PATIENT, DOC_ID, reader=reader)
+    result = l6_round_trip(item, DEST_PATIENT, DOC_ID, reader=reader)
     assert result.status is LevelStatus.FAIL
     assert "page_count" in result.detail
