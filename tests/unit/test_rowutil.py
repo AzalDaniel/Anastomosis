@@ -9,9 +9,20 @@ columns could state has nowhere honest to land except a loud failure
 readers instead.
 """
 
+from datetime import date
+
 import pytest
 
-from anastomosis.sources._rowutil import clean_date, clean_dt
+from anastomosis.core.model import Immunization
+from anastomosis.sources._rowutil import (
+    FieldMap,
+    Row,
+    RowTable,
+    cell_date,
+    cell_key,
+    clean_date,
+    clean_dt,
+)
 
 
 @pytest.mark.parametrize("raw", ["0", "00000000"])
@@ -59,3 +70,74 @@ def test_clean_dt_and_clean_date_pass_through_blanks_and_missing_columns() -> No
     assert clean_dt({}, "c") is None
     assert clean_dt({"c": "   "}, "c") is None
     assert clean_date({}, "c") is None
+
+
+def _shots() -> RowTable[Immunization]:
+    """The adapters' table shape in miniature: ids, a date, a bare column."""
+    return RowTable(
+        Immunization,
+        "unit_source",
+        "shots.tsv",
+        FieldMap("Guid", "id", cell_key),
+        FieldMap("Pt", "patient_id", cell_key),
+        FieldMap("Given", "administered_on", cell_date),
+        FieldMap("Name", "vaccine"),
+        "Reviewed",
+        provenance_id="Guid",
+    )
+
+
+def test_a_row_table_reads_each_field_through_its_own_transform() -> None:
+    shot = _shots().build({"Guid": " g1 ", "Pt": "p1", "Given": "10/03/2022", "Name": "Influenza"})
+    assert (shot.id, shot.patient_id, shot.vaccine) == ("g1", "p1", "Influenza")
+    assert shot.administered_on == date(2022, 10, 3)
+
+
+def test_a_row_table_consumes_exactly_the_columns_it_names() -> None:
+    """Rule 63: a column the table names — as a field OR as a bare name — is
+    consumed; every other VALUED column rides `extensions`, a blank one none."""
+    shot = _shots().build(
+        {"Guid": "g1", "Pt": "p1", "Name": "Influenza", "Reviewed": "true", "Lot": "L9", "Sp": "  "}
+    )
+    assert shot.extensions == {"unit_source:Lot": "L9"}
+
+
+def test_a_row_table_names_the_table_and_the_row_in_provenance() -> None:
+    shot = _shots().build({"Guid": "g1", "Pt": "p1"})
+    assert shot.provenance is not None
+    assert (shot.provenance.source_system, shot.provenance.source_file) == (
+        "unit_source",
+        "shots.tsv",
+    )
+    assert shot.provenance.source_id == "g1"
+
+
+def test_a_blank_id_column_reads_as_no_provenance_id_unless_the_table_says_otherwise() -> None:
+    """The two spellings the adapters' output carries: thirteen tables name no
+    id at all for a blank key, four name an empty one. Either way the model's
+    own id is "", never a freshly minted uuid."""
+    row: Row = {"Guid": "   ", "Pt": "p1"}
+    silent = _shots().build(row)
+    assert silent.provenance is not None and silent.provenance.source_id is None
+    keyed = RowTable(
+        Immunization,
+        "unit_source",
+        "shots.tsv",
+        FieldMap("Guid", "id", cell_key),
+        FieldMap("Pt", "patient_id", cell_key),
+        provenance_id="Guid",
+        provenance_key=True,
+    ).build(row)
+    assert keyed.provenance is not None and keyed.provenance.source_id == ""
+    assert silent.id == ""
+
+
+def test_a_built_field_overrides_the_table_and_extensions_ride_beside_the_residual() -> None:
+    """What a table has no slot for arrives as a keyword; `extensions=` adds."""
+    shot = _shots().build(
+        {"Guid": "g1", "Pt": "p1", "Name": "Influenza", "Lot": "L9"},
+        extensions={"unit_source:side:note": "joined"},
+        vaccine="Influenza (derived)",
+    )
+    assert shot.vaccine == "Influenza (derived)"
+    assert shot.extensions == {"unit_source:Lot": "L9", "unit_source:side:note": "joined"}

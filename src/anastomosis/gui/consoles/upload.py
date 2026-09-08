@@ -4,9 +4,9 @@ Owns the read-only ledger views and the live drive
 (``upload_start``/``upload_stop``); every method returns a JSON-safe dict,
 never raises, emits only PHI-safe events.
 
-The live-drive worker resolves ``_attach_destination``
-(:mod:`anastomosis.gui.controller`) LATE via a lazy import, so tests can
-monkeypatch the module-level seam.
+The live-drive worker builds its destination through
+:func:`~anastomosis.deliver.browser.attach.attach_destination`, imported inside
+the worker body — the same seam the CLI's browser route uses.
 """
 
 from __future__ import annotations
@@ -273,8 +273,8 @@ class UploadConsole:
             # copy's TOCTOU), attaches, recovers, runs, reports — never the operator's browser.
             from anastomosis.commands.upload_command import UploadCommand, run_upload_command
             from anastomosis.core.locking import OutputLockedError
+            from anastomosis.deliver.browser import attach as _attach
             from anastomosis.deliver.browser.gates import DeliveryRefused
-            from anastomosis.gui import controller as _controller_module
 
             try:
                 result = run_upload_command(
@@ -284,7 +284,7 @@ class UploadConsole:
                         max_attempts=max_attempts,
                         verify=verify,
                     ),
-                    lambda: _controller_module._attach_destination(cdp_url, loaded),
+                    lambda: _attach.attach_destination(cdp_url, loaded),
                     stop=stop,
                 )
                 if result.aborted_reason is not None:

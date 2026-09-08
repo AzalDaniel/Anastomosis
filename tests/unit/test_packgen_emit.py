@@ -714,3 +714,29 @@ def test_a_string_that_is_not_published_vocabulary_stays_quarantined() -> None:
     assert published_heading("Kinfolk Probe") is None
     assert published_heading("Springfield Family Practice") is None
     assert published_heading("") is None
+
+
+def test_a_failed_re_emit_leaves_the_previous_draft_whole(
+    analysis: PackAnalysis, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import anastomosis.packgen.emit as emit
+    from anastomosis.core.atomic import atomic_replace
+
+    pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
+    before = (pack_dir / "DRAFT.md").read_text(encoding="utf-8")
+    real = emit.atomic_write_text
+
+    def _dies_partway(target: Path, text: str) -> None:
+        if target.name != "DRAFT.md":
+            real(target, text)
+            return
+        with atomic_replace(target) as tmp:  # the bytes a killed run would have left
+            tmp.write_text(text[:40], encoding="utf-8")
+            raise OSError("no space left on device")
+
+    monkeypatch.setattr(emit, "atomic_write_text", _dies_partway)
+    with pytest.raises(OSError):
+        emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
+
+    assert (pack_dir / "DRAFT.md").read_text(encoding="utf-8") == before
+    assert not list(pack_dir.glob(".DRAFT.md.*.tmp")), "a temp survived the failure"

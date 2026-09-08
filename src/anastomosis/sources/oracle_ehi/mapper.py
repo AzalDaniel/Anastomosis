@@ -34,7 +34,16 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.textutil import clean_cell, html_to_text
-from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
+from anastomosis.sources._rowutil import (
+    FieldMap,
+    RowTable,
+    cell_date,
+    clean_date,
+    clean_dt,
+    clean_str,
+    group_by,
+    residual,
+)
 
 from .loader import Export, Row
 
@@ -105,14 +114,19 @@ class _CodeBook:
 
 # --- patients (§3.2 dms_person3.html) -----------------------------------------
 
-_PERSON_MAPPED = frozenset(
-    {
-        "PERSON_ID",
-        "NAME_FULL_FORMATTED",
-        "BIRTH_DT_TM",
-        "SEX_CD",
-        "DECEASED_DT_TM",
-    }
+_PERSON = RowTable(
+    Patient,
+    SOURCE,
+    "PERSON.sql",
+    # NAME_FULL_FORMATTED is the only formatted-name column the brief
+    # documents (§3.2); structured given/family columns are not cited, so
+    # `given_name` stays unset.
+    FieldMap("NAME_FULL_FORMATTED", "family_name"),
+    FieldMap("BIRTH_DT_TM", "birth_date", cell_date),
+    "PERSON_ID",
+    "SEX_CD",
+    "DECEASED_DT_TM",
+    provenance_id="PERSON_ID",
 )
 # PERSON_ALIAS columns are not enumerated in the brief (§3.2 covers only
 # PERSON/ENCOUNTER); per rule 64 the adapter surfaces every alias value as
@@ -149,39 +163,38 @@ def _map_patient(row: Row, aliases: list[Row], codes: _CodeBook) -> Patient:
     alias_ids, alias_payloads = _alias_identifiers(aliases)
     identifiers.extend(alias_ids)
 
-    extensions = _ext(row, _PERSON_MAPPED)
+    extensions: dict[str, Any] = {}
     if alias_payloads:
         extensions[f"{SOURCE}:PERSON_ALIAS"] = alias_payloads
     deceased = _dt(row, "DECEASED_DT_TM")
     if deceased is not None:
         extensions[f"{SOURCE}:DECEASED_DT_TM"] = deceased.isoformat()
 
-    return Patient(
+    return _PERSON.build(
+        row,
+        extensions=extensions,
         id=person_id,
-        # NAME_FULL_FORMATTED is the only formatted-name column the brief
-        # documents (§3.2); structured given/family columns are not cited.
-        given_name=None,
-        family_name=_s(row, "NAME_FULL_FORMATTED"),
-        birth_date=_d(row, "BIRTH_DT_TM"),
         sex=codes.display(_s(row, "SEX_CD")),
         status="Deceased" if deceased is not None else None,
         identifiers=identifiers,
-        extensions=extensions,
-        provenance=_prov("PERSON", person_id),
     )
 
 
 # --- encounters (§3.2 dms_encounter17.html) -----------------------------------
 
-_ENCOUNTER_MAPPED = frozenset(
-    {
-        "ENCNTR_ID",
-        "PERSON_ID",
-        "ENCNTR_TYPE_CD",
-        "REG_DT_TM",
-        "DISCH_DT_TM",
-        "REASON_FOR_VISIT",
-    }
+_ENCOUNTER = RowTable(
+    Encounter,
+    SOURCE,
+    "ENCOUNTER.sql",
+    # REG_DT_TM is the registration instant; the calendar date is the date
+    # of service (DateField semantics — no tz shift).
+    FieldMap("REG_DT_TM", "date_of_service", cell_date),
+    FieldMap("REASON_FOR_VISIT", "chief_complaint"),  # §3.2 free-text visit reason
+    "ENCNTR_ID",
+    "PERSON_ID",
+    "ENCNTR_TYPE_CD",
+    "DISCH_DT_TM",
+    provenance_id="ENCNTR_ID",
 )
 
 
@@ -190,21 +203,16 @@ def _map_encounter(row: Row, codes: _CodeBook) -> Encounter:
     person_id = _s(row, "PERSON_ID")
     assert encntr_id is not None and person_id is not None
 
-    reg = _dt(row, "REG_DT_TM")
-    extensions = _ext(row, _ENCOUNTER_MAPPED)
+    extensions: dict[str, Any] = {}
     if disch := _dt(row, "DISCH_DT_TM"):
         extensions[f"{SOURCE}:DISCH_DT_TM"] = disch.isoformat()
 
-    return Encounter(
+    return _ENCOUNTER.build(
+        row,
+        extensions=extensions,
         id=encntr_id,
         patient_id=person_id,
-        # REG_DT_TM is the registration instant; the calendar date is the
-        # date of service (DateField semantics — no tz shift).
-        date_of_service=reg.date() if reg is not None else None,
-        chief_complaint=_s(row, "REASON_FOR_VISIT"),  # §3.2 free-text visit reason
         encounter_type=codes.display(_s(row, "ENCNTR_TYPE_CD")),
-        extensions=extensions,
-        provenance=_prov("ENCOUNTER", encntr_id),
     )
 
 

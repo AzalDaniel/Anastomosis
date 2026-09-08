@@ -120,32 +120,6 @@
     }
   }
 
-  // `not_carried`'s bare key name says nothing: it is QA's "N fact(s) carried
-  // by the record summary, not the visit charts" register, spelled out here in
-  // the CLI's own words (pipeline.py's settle_qa, #297). settle_qa puts the key
-  // on the counts dict only when it is nonzero, so this reads exactly the CLI's
-  // "only when there is something to say" rule — silent whenever a chart
-  // abbreviates nothing.
-  const COUNT_TEXT = {
-    not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
-  };
-  const NON_COUNT_KEYS = [
-    "type",
-    "stage",
-    "state",
-    "flow",
-    "summary_id",
-    "notice",
-    "outcome",
-    "source_reading",
-  ];
-  function countsText(event) {
-    return Object.keys(event)
-      .filter((k) => !NON_COUNT_KEYS.includes(k))
-      .map((k) => (COUNT_TEXT[k] ? COUNT_TEXT[k](event[k]) : `${k.replace(/_/g, " ")} ${event[k]}`))
-      .join(" · ");
-  }
-
   function setCurrent(text) {
     Shell.setStatus(el("charts-current"), text);
   }
@@ -188,52 +162,39 @@
     if (frame) frame.classList.add("is-stopped");
   }
 
-  // A run that has been asked for but has not begun. The click says
-  // "Rebuilding…" and empties the bar straight away, because a button that
-  // answers nothing feels broken — but the last run's rail counts and patient
-  // table are RESULTS, and they stay until this run actually produces its own.
-  // So a submit the controller refuses puts back the two things the click
-  // moved, and the finished run below them is never touched.
-  let pendingRun = null;
-
-  function askForRun(config) {
-    pendingRun = {
-      config,
+  // The click says "Rebuilding…" and empties the bar straight away; what it
+  // moved is the two things a refused submit puts back. The rail counts and
+  // the patient table below them are results and are never touched here.
+  const RUN = Shell.pendingRun({
+    patients: "charts-patients",
+    patientsBody: "charts-patients-body",
+    reading: "charts-reading",
+    save: () => ({
       current: el("charts-current") ? el("charts-current").textContent : "",
       fill: el("charts-fill") ? el("charts-fill").style.width : "0%",
-    };
-    setCurrent("Rebuilding…");
-    setProgress(0);
-  }
-
-  function abandonRun() {
-    if (!pendingRun) return;
-    setCurrent(pendingRun.current);
-    const fill = el("charts-fill");
-    if (fill) fill.style.width = pendingRun.fill;
-    pendingRun = null;
-  }
-
-  // The first event of the run is what replaces the last one's results.
-  // Doing it here rather than at submit time settles the order, so a reset
-  // arriving late cannot wipe a stage card an earlier event already set.
-  function beginRun() {
-    if (!pendingRun) return;
-    const config = pendingRun.config;
-    pendingRun = null;
-    skippedStages = [];
-    plannedStages = stagesFor(config);
-    settledStages = 0;
-    Shell.clearPatients(el("charts-patients"), el("charts-patients-body"));
-    Shell.renderReading(el("charts-reading"), []);
-    const frame = el("charts-progress");
-    if (frame) frame.classList.remove("is-stopped");
-    renderRail(config);
-  }
+    }),
+    answer: () => {
+      setCurrent("Rebuilding…");
+      setProgress(0);
+    },
+    restore: (saved) => {
+      setCurrent(saved.current);
+      const fill = el("charts-fill");
+      if (fill) fill.style.width = saved.fill;
+    },
+    begin: (config) => {
+      skippedStages = [];
+      plannedStages = stagesFor(config);
+      settledStages = 0;
+      const frame = el("charts-progress");
+      if (frame) frame.classList.remove("is-stopped");
+      renderRail(config);
+    },
+  });
 
   // --- the event handler for the "pipeline" flow ---------------------------
   function onEvent(event) {
-    beginRun();
+    RUN.begin();
     switch (event.type) {
       case "stage":
         markStage(event.stage, event.state);
@@ -253,7 +214,7 @@
       case "progress": {
         const card = ensureStageCard(event.stage);
         const counts = card && card.querySelector(".stage-counts");
-        if (counts) counts.textContent = countsText(event);
+        if (counts) counts.textContent = Shell.countsText(event);
         break;
       }
       case "done":
@@ -297,7 +258,7 @@
     ) {
       return;
     }
-    askForRun(v);
+    RUN.ask(v);
     setBusy(true);
     try {
       // Fire-and-forget on a worker thread; results stream back as events.
@@ -321,12 +282,12 @@
         // Nothing started, so the screen goes back to describing the last run
         // that did: no rail reset, no wiped patient table, no "Ready." over
         // work that is still in flight somewhere else.
-        abandonRun();
+        RUN.abandon();
         setBusy(false);
         Shell.showBanner(Shell.refusalText(started.error));
       }
     } catch (err) {
-      abandonRun();
+      RUN.abandon();
       setBusy(false);
       Shell.showBanner(String(err));
     }

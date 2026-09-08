@@ -123,6 +123,12 @@ class _RunConsole:
             for s in summaries
         ]
 
+    def _refused(self, exc: Exception) -> dict[str, object]:
+        """One refusal, said identically by both run flows: this message is
+        PHI-free, so unlike `_fail`'s it is surfaced whole rather than as a type."""
+        self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
+        return {"ok": False, "error": str(exc)}
+
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         return fail_result(self._emit, self._FLOW, stage, exc)
@@ -277,8 +283,7 @@ class PipelineConsole(_RunConsole):
         try:
             out = require_output_dir(out_dir)
         except OutputPathError as exc:
-            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
-            return {"ok": False, "error": str(exc)}
+            return self._refused(exc)
         rollup: dict[str, int] = {}
         _on_event = self._stage_emitter(rollup)
 
@@ -311,8 +316,7 @@ class PipelineConsole(_RunConsole):
                 on_event=_on_event,
             )
         except PipelineError as exc:
-            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
-            return {"ok": False, "error": str(exc)}
+            return self._refused(exc)
         except Exception as exc:  # any non-pipeline crash: type name only, no PHI
             return self._fail("run_pipeline", exc)
 
@@ -475,10 +479,7 @@ class MigrationConsole(_RunConsole):
         try:
             out = require_output_dir(out_dir)
         except OutputPathError as exc:
-            # _fail reports the exception TYPE (its PHI contract). This message
-            # is PHI-free and tells the person what to do, so it is surfaced.
-            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
-            return {"ok": False, "error": str(exc)}
+            return self._refused(exc)
         rollup: dict[str, int] = {}
         _on_event = self._stage_emitter(rollup)
 
@@ -499,8 +500,7 @@ class MigrationConsole(_RunConsole):
                 on_event=_on_event,
             )
         except PipelineError as exc:
-            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
-            return {"ok": False, "error": str(exc)}
+            return self._refused(exc)
         except Exception as exc:  # any non-migration crash: type name only, no PHI
             return self._fail("run_migration", exc)
 

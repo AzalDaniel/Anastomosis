@@ -17,7 +17,7 @@ import pytest
 
 pymupdf = pytest.importorskip("pymupdf", reason="the layout learner needs the render extra")
 
-from anastomosis.commands.packinit import PackInitCommand, run_pack_init  # noqa: E402
+from anastomosis.commands.learn import LearnCommand, run_learn  # noqa: E402
 from anastomosis.packgen import analyze  # noqa: E402
 from anastomosis.packgen.emit import OCR_EVIDENCE_NAME, UNPLACED_NAME  # noqa: E402
 from anastomosis.packgen.evidence import (  # noqa: E402
@@ -423,13 +423,15 @@ def test_pack_init_without_an_engine_writes_nothing_at_all(
     samples = _raster_samples(tmp_path / "samples")
     output = tmp_path / "packs"
 
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="layout", samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True
+        )
     )
 
     assert result.ok is False
     assert result.error == "OcrRequiredError"
-    assert result.pack_dir is None
+    assert result.written_dir is None
     assert not (output / "synthetic").exists()
 
 
@@ -443,8 +445,9 @@ def test_pack_init_can_be_told_to_stay_on_native_text_only(tmp_path: Path) -> No
     samples = _raster_samples(tmp_path / "samples")
     output = tmp_path / "packs"
 
-    result = run_pack_init(
-        PackInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
             samples=[str(samples)],
             name="strict",
             out_dir=output,
@@ -467,13 +470,19 @@ def test_a_raster_only_sample_set_now_produces_a_reviewable_draft(tmp_path: Path
     samples = _raster_samples(tmp_path / "samples")
     output = tmp_path / "packs"
 
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="raster_soap", out_dir=output, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
+            samples=[str(samples)],
+            name="raster_soap",
+            out_dir=output,
+            confirmed=True,
+        )
     )
 
     assert result.ok is True, result.error
     pack_dir = output / "raster_soap"
-    assert result.pack_dir == pack_dir
+    assert result.written_dir == pack_dir
 
     manifest = (pack_dir / "pack.yaml").read_text(encoding="utf-8")
     assert "OCR EVIDENCE" in manifest
@@ -496,8 +505,10 @@ def test_the_summary_a_person_confirms_states_the_ocr_caveat(tmp_path: Path) -> 
     """The operator confirms from the summary, so the caveat has to be in it."""
     samples = _raster_samples(tmp_path / "samples")
 
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="raster_soap", out_dir=tmp_path / "packs")
+    result = run_learn(
+        LearnCommand(
+            kind="layout", samples=[str(samples)], name="raster_soap", out_dir=tmp_path / "packs"
+        )
     )
 
     assert result.error == "ConfirmationRequired"
@@ -533,8 +544,14 @@ def test_a_recognized_page_never_offers_its_sentinel_face_to_the_css(
     samples = _raster_samples(tmp_path / "samples")
     output = tmp_path / "packs"
 
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="raster_soap", out_dir=output, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
+            samples=[str(samples)],
+            name="raster_soap",
+            out_dir=output,
+            confirmed=True,
+        )
     )
 
     assert result.ok is True, result.error

@@ -18,7 +18,7 @@ import pytest
 pymupdf = pytest.importorskip("pymupdf", reason="the Teach flow needs the render extra (PyMuPDF)")
 
 import anastomosis.reconstruct.chromium as chromium  # noqa: E402
-from anastomosis.commands.packinit import PackInitCommand, run_pack_init  # noqa: E402
+from anastomosis.commands.learn import LearnCommand, run_learn  # noqa: E402
 from anastomosis.gui.controller import GuiController  # noqa: E402
 from anastomosis.pipeline import RENDER_SETTINGS_NAME, PipelineError  # noqa: E402
 from anastomosis.reconstruct import discover_packs, user_packs_dir  # noqa: E402
@@ -120,13 +120,17 @@ def test_the_draft_lands_in_the_user_home_not_the_working_directory(
 def test_an_explicit_destination_is_still_honored(tmp_path: Path) -> None:
     """Naming a directory still writes there — the default changed, not the option."""
     chosen = tmp_path / "chosen"
-    result = run_pack_init(
-        PackInitCommand(
-            samples=[str(_samples(tmp_path))], name=LEARNED, out_dir=chosen, confirmed=True
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
+            samples=[str(_samples(tmp_path))],
+            name=LEARNED,
+            out_dir=chosen,
+            confirmed=True,
         )
     )
     assert result.ok is True
-    assert result.pack_dir == chosen / LEARNED
+    assert result.written_dir == chosen / LEARNED
 
 
 # --- consent -----------------------------------------------------------------
@@ -414,9 +418,13 @@ def test_a_teach_may_not_claim_a_shipped_layouts_name(tmp_path: Path) -> None:
     """Teaching "generic_soap" refuses at the door and writes nothing — the
     alternative is the operator's own home standing in front of a shipped
     layout, diagnosed only as "untrusted" every run thereafter."""
-    result = run_pack_init(
-        PackInitCommand(
-            samples=[str(_samples(tmp_path))], name="generic_soap", display=None, confirmed=True
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
+            samples=[str(_samples(tmp_path))],
+            name="generic_soap",
+            display=None,
+            confirmed=True,
         )
     )
     assert result.error == "BuiltinPackName"
@@ -450,9 +458,13 @@ def test_a_teach_that_cannot_record_trust_removes_what_it_wrote(
             raise OSError("store not writable")
 
     monkeypatch.setattr(packtrust, "default_pack_trust", lambda: _Refuses())
-    result = run_pack_init(
-        PackInitCommand(
-            samples=[str(_samples(tmp_path))], name=LEARNED, display=None, confirmed=True
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
+            samples=[str(_samples(tmp_path))],
+            name=LEARNED,
+            display=None,
+            confirmed=True,
         )
     )
     assert result.error == "OSError"

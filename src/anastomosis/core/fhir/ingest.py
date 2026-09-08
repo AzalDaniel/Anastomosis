@@ -12,10 +12,7 @@ from lxml import html as lxml_html
 from anastomosis.core.model import (
     Addendum,
     Address,
-    AdvanceDirective,
-    AllergyCategory,
     AllergyIntolerance,
-    AnastBase,
     Condition,
     ContactKind,
     ContactPoint,
@@ -24,8 +21,6 @@ from anastomosis.core.model import (
     Encounter,
     Facility,
     FamilyMemberHistory,
-    Goal,
-    Guarantor,
     Identifier,
     IdentifierKind,
     Immunization,
@@ -33,29 +28,39 @@ from anastomosis.core.model import (
     NoteSection,
     Observation,
     ObservationCategory,
-    PastMedicalHistory,
     Patient,
-    PatientContact,
     PatientRecord,
     Practitioner,
     Prescription,
-    PrescriptionTransaction,
     SectionKind,
 )
 from anastomosis.core.timeutil import iso_date, iso_datetime
 
-from .export import EXT_NS, EXTRAS_NS, FIELD_NS, IDENTIFIER_SYSTEMS, TELECOM
+from .fields import (
+    ACTOR,
+    ALLERGY,
+    ARTIFACT,
+    CONDITION,
+    COVERAGE,
+    ENCOUNTER,
+    EXTRAS_NS,
+    FAMILY_HISTORY,
+    IDENTIFIER_SYSTEMS,
+    IMMUNIZATION,
+    MEDICATION,
+    OBSERVATION,
+    PATIENT,
+    PRESCRIPTION,
+    RECORD_EXTRAS,
+    TELECOM,
+    from_extensions,
+    split_extensions,
+)
 
 __all__ = ["from_bundle"]
 
 _KIND_BY_SYSTEM = {system: kind for kind, system in IDENTIFIER_SYSTEMS.items()}
 _TELECOM_BY_SHAPE = {shape: kind for kind, shape in TELECOM.items()}
-
-_EXTRA_MODELS: dict[str, type[AnastBase]] = {
-    "past_medical_history": PastMedicalHistory,
-    "advance_directives": AdvanceDirective,
-    "goals": Goal,
-}
 
 
 def _unref(ref: dict[str, str] | None) -> str | None:
@@ -66,24 +71,10 @@ def _unref(ref: dict[str, str] | None) -> str | None:
     return ref["reference"].removeprefix("urn:uuid:").removeprefix("urn:anastomosis:")
 
 
-def _exts(resource: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split a resource's extension list back into (source_ext, fields)."""
-    source: dict[str, Any] = {}
-    fields: dict[str, Any] = {}
-    for ext in resource.get("extension", []):
-        if ext["url"] == EXT_NS:
-            source = json.loads(ext["valueString"])
-        elif ext["url"].startswith(FIELD_NS):
-            fields[ext["url"].removeprefix(FIELD_NS)] = json.loads(ext["valueString"])
-    return source, fields
-
-
-def _pref(fields: dict[str, Any], key: str, fhir_value: Any, placeholder: str) -> Any:
-    """Exact field-ext wins; otherwise the FHIR value unless it is the
+def _pref(kwargs: dict[str, Any], key: str, fhir_value: Any, placeholder: str) -> None:
+    """The tail's exact value wins; otherwise the FHIR value, unless it is the
     required-field placeholder export fabricates for a missing value."""
-    if key in fields:
-        return fields[key]
-    return None if fhir_value == placeholder else fhir_value
+    kwargs.setdefault(key, None if fhir_value == placeholder else fhir_value)
 
 
 def _dt(value: Any) -> datetime | None:
@@ -103,40 +94,35 @@ def _by_type(bundle: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 
 def _patient(resource: dict[str, Any]) -> Patient:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, PATIENT)
     name = (resource.get("name") or [{}])[0]
     given = name.get("given", [])
-    address_list = [
-        Address(
-            line1=(a.get("line") or [None])[0],
-            line2=(a.get("line") or [None, None])[1] if len(a.get("line", [])) > 1 else None,
-            city=a.get("city"),
-            state=a.get("state"),
-            postal_code=a.get("postalCode"),
-        )
-        for a in resource.get("address", [])
-    ]
     communication = resource.get("communication", [])
+    # Reading half of export's middle-name and address rules: the tail holds
+    # either only when the FHIR shape would read it back into a neighbour.
+    kwargs.setdefault("middle_name", given[1] if len(given) > 1 else None)
+    kwargs.setdefault(
+        "addresses",
+        [
+            Address(
+                line1=(a.get("line") or [None])[0],
+                line2=(a.get("line") or [None, None])[1] if len(a.get("line", [])) > 1 else None,
+                city=a.get("city"),
+                state=a.get("state"),
+                postal_code=a.get("postalCode"),
+            )
+            for a in resource.get("address", [])
+        ],
+    )
     return Patient(
         id=resource["id"],
-        # Reading half of export's middle-name rule: an extension middle name
-        # means no given name, so `given[0]` must not be read as given_name.
         given_name=None if "middle_name" in fields else (given[0] if given else None),
-        middle_name=fields.get("middle_name", given[1] if len(given) > 1 else None),
         family_name=name.get("family"),
         suffix=(name.get("suffix") or [None])[0],
         birth_date=_d(resource.get("birthDate")),
-        sex=fields.get("sex"),
-        gender_identity=fields.get("gender_identity"),
-        sexual_orientation=fields.get("sexual_orientation"),
-        race=fields.get("race", []),
-        ethnicity=fields.get("ethnicity", []),
         language=communication[0]["language"]["text"] if communication else None,
         marital_status=(resource.get("maritalStatus") or {}).get("text"),
-        mothers_maiden_name=fields.get("mothers_maiden_name"),
-        contact_preference=fields.get("contact_preference"),
-        status=fields.get("status"),
-        notes=fields.get("notes"),
         identifiers=[
             Identifier(
                 kind=IdentifierKind(_KIND_BY_SYSTEM.get(i.get("system", ""), "other")),
@@ -154,18 +140,8 @@ def _patient(resource: dict[str, Any]) -> Patient:
             )
             for t in resource.get("telecom", [])
         ],
-        # Reading half of the address rule: the extension holds the address
-        # list verbatim only when some address's first line was empty.
-        addresses=(
-            [Address.model_validate(a) for a in fields["addresses"]]
-            if "addresses" in fields
-            else address_list
-        ),
-        contacts=[PatientContact.model_validate(c) for c in fields.get("contacts", [])],
-        guarantor=(
-            Guarantor.model_validate(fields["guarantor"]) if fields.get("guarantor") else None
-        ),
         extensions=source,
+        **kwargs,
     )
 
 
@@ -205,7 +181,7 @@ def _note_sections(html_text: str) -> tuple[list[NoteSection], list[Addendum]]:
 
 
 def _encounter(resource: dict[str, Any], notes: dict[str, dict[str, str]]) -> Encounter:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
     sections: list[NoteSection] = []
     addenda: list[Addendum] = []
     note = notes.get(resource["id"])
@@ -224,47 +200,44 @@ def _encounter(resource: dict[str, Any], notes: dict[str, dict[str, str]]) -> En
         patient_id=_unref(resource.get("subject")) or "",
         date_of_service=_d((resource.get("period") or {}).get("start")),
         chief_complaint=reasons[0]["text"] if reasons else None,
-        encounter_type=fields.get("encounter_type"),
         note_type=types[0]["text"] if types else None,
         provider_id=_unref(participants[0]["individual"]) if participants else None,
         facility_id=_unref(locations[0]["location"]) if locations else None,
-        signed_by_id=fields.get("signed_by_id"),
-        signed_at=_dt(fields.get("signed_at")),
-        last_modified_at=_dt(fields.get("last_modified_at")),
         sections=sections,
         addenda=addenda,
         diagnosis_ids=[
             ref for dx in resource.get("diagnosis", []) if (ref := _unref(dx.get("condition")))
         ],
         extensions=source,
+        **from_extensions(fields, ENCOUNTER),
     )
 
 
 def _observation(resource: dict[str, Any]) -> Observation:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, OBSERVATION)
     categories = resource.get("category", [])
     category = "other"
     if categories and categories[0].get("coding"):
         category = categories[0]["coding"][0].get("code", "other")
     code = resource.get("code", {})
     coding = (code.get("coding") or [{}])[0]
+    kwargs["display"] = coding.get("display") or kwargs.get("display") or code.get("text")
+    kwargs.setdefault("value", resource.get("valueString"))
     return Observation(
         id=resource["id"],
         patient_id=_unref(resource.get("subject")) or "",
         encounter_id=_unref(resource.get("encounter")),
         category=ObservationCategory(category),
         code=coding.get("code"),
-        display=coding.get("display") or fields.get("display") or code.get("text"),
-        value=fields.get("value", resource.get("valueString")),
-        unit=fields.get("unit"),
         effective_at=_dt(resource.get("effectiveDateTime")),
-        recorded_at=_dt(fields.get("recorded_at")),
         extensions=source,
+        **kwargs,
     )
 
 
 def _condition(resource: dict[str, Any]) -> Condition:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
     by_system = {c.get("system"): c.get("code") for c in resource.get("code", {}).get("coding", [])}
     status = resource["clinicalStatus"]["coding"][0]["code"]
     return Condition(
@@ -273,18 +246,19 @@ def _condition(resource: dict[str, Any]) -> Condition:
         icd10=by_system.get("http://hl7.org/fhir/sid/icd-10-cm"),
         snomed=by_system.get("http://www.snomed.info/sct"),
         display=resource.get("code", {}).get("text"),
-        acuity=fields.get("acuity"),
         onset=_d(resource.get("onsetDateTime")),
         stopped=_d(resource.get("abatementDateTime")),
         recorded_at=_dt(resource.get("recordedDate")),
         active=status == "active",
         extensions=source,
+        **from_extensions(fields, CONDITION),
     )
 
 
 def _allergy(resource: dict[str, Any]) -> AllergyIntolerance:
-    source, fields = _exts(resource)
-    reactions = fields.get(
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, ALLERGY)
+    kwargs.setdefault(
         "reactions",
         [
             m["text"]
@@ -297,117 +271,91 @@ def _allergy(resource: dict[str, Any]) -> AllergyIntolerance:
         id=resource["id"],
         patient_id=_unref(resource.get("patient")) or "",
         substance=resource.get("code", {}).get("text"),
-        category=AllergyCategory(fields.get("category", "other")),
-        reactions=reactions,
-        severity=fields.get("severity"),
         onset=_d(resource.get("onsetDateTime")),
         active=resource["clinicalStatus"]["coding"][0]["code"] == "active",
         extensions=source,
+        **kwargs,
     )
 
 
 def _medication(resource: dict[str, Any]) -> MedicationStatement:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, MEDICATION)
+    _pref(kwargs, "display_name", resource["medicationCodeableConcept"]["text"], "Unknown")
     period = resource.get("effectivePeriod", {})
     dosage = resource.get("dosage", [])
     return MedicationStatement(
         id=resource["id"],
         patient_id=_unref(resource.get("subject")) or "",
-        generic_name=fields.get("generic_name"),
-        brand_name=fields.get("brand_name"),
-        strength=fields.get("strength"),
-        route=fields.get("route"),
-        dose_form=fields.get("dose_form"),
-        display_name=_pref(
-            fields, "display_name", resource["medicationCodeableConcept"]["text"], "Unknown"
-        ),
         sig=dosage[0]["text"] if dosage else None,
-        associated_dx=fields.get("associated_dx"),
-        rxnorm=fields.get("rxnorm"),
         start=_d(period.get("start")),
         stop=_d(period.get("end")),
-        last_modified_at=_dt(fields.get("last_modified_at")),
         active=resource["status"] == "active",
-        prescription_ids=fields.get("prescription_ids", []),
         extensions=source,
+        **kwargs,
     )
 
 
 def _prescription(resource: dict[str, Any]) -> Prescription:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
     return Prescription(
         id=resource["id"],
         patient_id=_unref(resource.get("subject")) or "",
-        medication_id=fields.get("medication_id"),
         prescriber_id=_unref(resource.get("requester")),
-        prefix=fields.get("prefix"),
-        status_label=fields.get("status_label"),
-        display_date=_dt(fields.get("display_date")),
         sig=(resource.get("dosageInstruction") or [{}])[0].get("text"),
-        refills=fields.get("refills"),
-        quantity=fields.get("quantity"),
-        transactions=[
-            PrescriptionTransaction.model_validate(t) for t in fields.get("transactions", [])
-        ],
         extensions=source,
+        **from_extensions(fields, PRESCRIPTION),
     )
 
 
 def _immunization(resource: dict[str, Any]) -> Immunization:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, IMMUNIZATION)
+    _pref(kwargs, "vaccine", resource["vaccineCode"]["text"], "Unknown")
     notes = resource.get("note", [])
     return Immunization(
         id=resource["id"],
         patient_id=_unref(resource.get("patient")) or "",
-        vaccine=_pref(fields, "vaccine", resource["vaccineCode"]["text"], "Unknown"),
         administered_on=_d(resource.get("occurrenceDateTime")),
-        source=fields.get("source"),
         lot_number=resource.get("lotNumber"),
         expires=_d(resource.get("expirationDate")),
         comment=notes[0]["text"] if notes else None,
         extensions=source,
+        **kwargs,
     )
 
 
 def _family_history(resource: dict[str, Any]) -> FamilyMemberHistory:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, FAMILY_HISTORY)
     condition = (resource.get("condition") or [{}])[0]
+    _pref(kwargs, "diagnosis", condition.get("code", {}).get("text"), "Unknown")
+    _pref(kwargs, "relation", resource["relationship"]["text"], "unknown")
+    kwargs.setdefault("onset_date", _d(condition.get("onsetString")))
     return FamilyMemberHistory(
         id=resource["id"],
         patient_id=_unref(resource.get("patient")) or "",
-        diagnosis=_pref(fields, "diagnosis", condition.get("code", {}).get("text"), "Unknown"),
-        relation=_pref(fields, "relation", resource["relationship"]["text"], "unknown"),
-        onset_date=_d(fields.get("onset_date", condition.get("onsetString"))),
         extensions=source,
+        **kwargs,
     )
 
 
 def _coverage(resource: dict[str, Any]) -> Coverage:
-    source, fields = _exts(resource)
-    period = resource.get("period", {})
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, COVERAGE)
+    _pref(kwargs, "payer", resource["payor"][0].get("display"), "Unknown")
     fhir_order = resource.get("order")
+    kwargs.setdefault("order_of_benefits", None if fhir_order is None else fhir_order - 1)
+    period = resource.get("period", {})
     return Coverage(
         id=resource["id"],
         patient_id=_unref(resource.get("beneficiary")) or "",
-        payer=_pref(fields, "payer", resource["payor"][0].get("display"), "Unknown"),
-        plan_name=fields.get("plan_name"),
-        plan_type=fields.get("plan_type"),
-        coverage_type=fields.get("coverage_type"),
         member_id=resource.get("subscriberId"),
-        group_number=fields.get("group_number"),
-        order_of_benefits=fields.get(
-            "order_of_benefits", None if fhir_order is None else fhir_order - 1
-        ),
-        priority_label=fields.get("priority_label"),
-        employer=fields.get("employer"),
-        relationship_to_insured=fields.get("relationship_to_insured"),
-        payment_type=fields.get("payment_type"),
-        copay=fields.get("copay"),
         start=_d(period.get("start")),
         end=_d(period.get("end")),
         active=resource["status"] == "active",
-        status_label=fields.get("status_label"),
         extensions=source,
+        **kwargs,
     )
 
 
@@ -430,7 +378,7 @@ def _actors(bundle: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _practitioner(resource: dict[str, Any]) -> Practitioner:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
     name = (resource.get("name") or [{}])[0]
     # A Device names itself in `deviceName` rather than `name`; it is the same
     # canonical field on the way back.
@@ -441,14 +389,14 @@ def _practitioner(resource: dict[str, Any]) -> Practitioner:
         given_name=(name.get("given") or [None])[0],
         family_name=name.get("family"),
         display_name=name.get("text") or devices[0].get("name"),
-        credential=fields.get("credential"),
         npi=identifiers[0]["value"] if identifiers else None,
         extensions=source,
+        **from_extensions(fields, ACTOR),
     )
 
 
 def _facility(resource: dict[str, Any]) -> Facility:
-    source, _ = _exts(resource)
+    source, _ = split_extensions(resource)
     address = resource.get("address", {})
     lines = address.get("line", [])
     telecom = {t["system"]: t["value"] for t in resource.get("telecom", [])}
@@ -467,20 +415,16 @@ def _facility(resource: dict[str, Any]) -> Facility:
 
 
 def _artifact(resource: dict[str, Any]) -> DocumentArtifact:
-    source, fields = _exts(resource)
+    source, fields = split_extensions(resource)
+    kwargs = from_extensions(fields, ARTIFACT)
     attachment = resource["content"][0]["attachment"]
+    kwargs.setdefault("mime_type", attachment.get("contentType", "application/octet-stream"))
     return DocumentArtifact(
         id=resource["id"],
         patient_id=_unref(resource.get("subject")) or "",
-        encounter_id=fields.get("encounter_id"),
-        path=fields.get("path"),
-        sha256=fields.get("sha256"),
-        mime_type=attachment.get("contentType", "application/octet-stream"),
         title=attachment.get("title"),
-        page_count=fields.get("page_count"),
-        pack_name=fields.get("pack_name"),
-        generated_at=_dt(fields.get("generated_at")),
         extensions=source,
+        **kwargs,
     )
 
 
@@ -493,7 +437,7 @@ def from_bundle(bundle: dict[str, Any]) -> PatientRecord:
     notes: dict[str, dict[str, str]] = {}
     artifacts: list[DocumentArtifact] = []
     for docref in grouped.get("DocumentReference", []):
-        _, fields = _exts(docref)
+        _, fields = split_extensions(docref)
         if fields.get("artifact"):
             artifacts.append(_artifact(docref))
             continue
@@ -535,7 +479,7 @@ def from_bundle(bundle: dict[str, Any]) -> PatientRecord:
         facilities=[_facility(r) for r in grouped.get("Location", [])],
     )
     for name, items in extras.items():
-        model = _EXTRA_MODELS.get(name)
+        model = RECORD_EXTRAS.get(name)
         if model is not None:
             setattr(record, name, [model.model_validate(item) for item in items])
     meta = extras.get("__record__")

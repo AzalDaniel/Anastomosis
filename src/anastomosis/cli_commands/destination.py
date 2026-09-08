@@ -1,9 +1,9 @@
 """``anast destination list`` / ``route`` / ``init`` — inspect routes, discover packs.
 
-See :mod:`anastomosis.cli_commands` for the split/registration rationale. One
-module-specific seam: the live selector-validator ``_make_validator`` is
-resolved LATE through the ``cli`` module (``_cli._make_validator``) so the
-wizard tests keep mocking it at ``cli._make_validator``.
+See :mod:`anastomosis.cli_commands` for the split/registration rationale.
+``--validate`` builds its live selector validator through
+:func:`~anastomosis.destinations.wizard.attach_selector_validator`, the seam
+the wizard tests mock.
 """
 
 from __future__ import annotations
@@ -283,6 +283,7 @@ def destination_init(
     )
     from anastomosis.destinations.wizard import (
         SLOT_GUIDANCE,
+        attach_selector_validator,
         registry_overlay_snippet,
         write_selectors,
     )
@@ -300,7 +301,7 @@ def destination_init(
             raise typer.Exit(code=2)
         _cli.console.print(SHARED_MACHINE_WARNING)
         try:
-            validator = _cli._make_validator(cdp)
+            validator = attach_selector_validator(cdp)
         except Exception as exc:  # attach/launch failure — name the type, no PHI
             _cli.console.print(f"[red]could not attach for validation ({type(exc).__name__})[/red]")
             raise typer.Exit(code=2) from None

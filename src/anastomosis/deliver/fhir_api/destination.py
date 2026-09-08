@@ -16,6 +16,7 @@ from collections.abc import Mapping
 
 from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.fhir import export
+from anastomosis.core.fhir.fields import IDENTIFIER_SYSTEMS, LOINC
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Identifier, IdentifierKind, Patient, PatientRecord
 from anastomosis.deliver.browser.errors import PermanentDeliveryError
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 # knows its note LOINC (Progress 11506-3, H&P 34117-2, …) overrides it.
 _DEFAULT_DOC_LOINC = "34109-9"
 _DEFAULT_DOC_DISPLAY = "Note"
-_LOINC_SYSTEM = export.LOINC
+_LOINC_SYSTEM = LOINC
 _PDF_MIME = "application/pdf"
 
 _MIB = 1024 * 1024
@@ -216,7 +217,7 @@ class FhirApiDestination:
         """
         chosen = _search_identifier(patient, allow_ssn=self._search_by_ssn)
         if chosen is not None:
-            system = export.IDENTIFIER_SYSTEMS[chosen.kind.value]
+            system = IDENTIFIER_SYSTEMS[chosen.kind.value]
             return {"identifier": f"{system}|{chosen.value}"}, ("identifier",)
         if not self._search_by_ssn and _has_usable_ssn(patient):
             # Demographics is not the answer here: it exists for a patient the
