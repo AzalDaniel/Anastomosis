@@ -568,16 +568,56 @@ def _liveness_state(page: Page) -> str:
     failure with an error of its own.
     """
     try:
-        return str(
+        state = str(
             page.evaluate(
                 "() => `bridge=${document.documentElement.dataset.bridge ?? 'unset'}"
                 " about-version=${document.querySelector('#about-version')"
                 " ? (document.querySelector('#about-version').dataset.version || 'empty')"
-                " : 'absent'}`"
+                " : 'absent'}"
+                " api=${typeof window.pywebview === 'undefined' ? 'no-pywebview'"
+                " : (!window.pywebview.api ? 'no-api'"
+                " : (typeof window.pywebview.api.info === 'function' ? 'callable'"
+                " : typeof window.pywebview.api.info))}"
+                " banner=${(document.querySelector('#banner-text')"
+                " || {}).textContent || 'none'}`"
             )
         )
     except Exception as exc:
         return f"the page could not be read ({type(exc).__name__})"
+    return f"{state} {_probe_info(page)}"
+
+
+def _probe_info(page: Page) -> str:
+    """Call info() from the page and say what came back.
+
+    The liveness predicate can only report that a round-trip did not finish.
+    Asking for it directly separates a bridge that never answers from one that
+    answers not-ok, which are different faults with the same symptom. Shapes
+    only — info() carries versions and adapter names, never a record.
+    """
+    try:
+        return str(
+            page.evaluate(
+                "async () => {"
+                " if (!(window.pywebview && window.pywebview.api"
+                " && window.pywebview.api.info)) return 'info=uncallable';"
+                " const timeout = new Promise(r => setTimeout("
+                " () => r('info=no-answer-in-10s'), 10000));"
+                " const others = await Promise.all(['gui_config', 'doctor'].map("
+                " n => (window.pywebview.api[n] ? window.pywebview.api[n]()"
+                " .then(v => `${n}:${!!(v && v.ok)}`, () => `${n}:rejected`)"
+                " : Promise.resolve(`${n}:absent`))));"
+                " const call = window.pywebview.api.info().then("
+                " v => `info=ok:${!!(v && v.ok)} error:${(v && v.error) || 'none'}`"
+                " + ` keys:${v ? Object.keys(v).length : 0}`,"
+                " e => `info=rejected:${String(e && e.message || e).slice(0, 120)}`);"
+                " const got = await Promise.race([call, timeout]);"
+                " return `${got} siblings:${others.join(',')}`;"
+                "}"
+            )
+        )
+    except Exception as exc:
+        return f"info= could not be called ({type(exc).__name__})"
 
 
 def _await_liveness(page: Page) -> None:

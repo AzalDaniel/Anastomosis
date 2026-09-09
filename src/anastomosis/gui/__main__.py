@@ -8,6 +8,7 @@ surfaces as a clean message + non-zero exit, never a traceback.
 from __future__ import annotations
 
 import sys
+import traceback
 
 
 def _self_check() -> int:
@@ -28,6 +29,35 @@ def _self_check() -> int:
         print(f"{failed} asset check(s) failed")
         return 1
     print(f"all {len(result.checks)} asset checks passed")
+    return _self_check_info(glyphs)
+
+
+def _self_check_info(glyphs: object) -> int:
+    """Prove ``info()`` answers — the dashboard paints nothing until it does,
+    and it reaches every source adapter and pack context, which the asset
+    checks do not. Printed, not logged: RULES.md 2 bars a traceback from a
+    log, and this call has no record in scope to leak.
+    """
+    from anastomosis.commands.run import get_toolkit_info, toolkit_payload
+
+    ok_mark = getattr(glyphs, "ok", "+")
+    fail_mark = getattr(glyphs, "fail", "x")
+    try:
+        payload = toolkit_payload(get_toolkit_info())
+    except Exception:
+        print(f"  {fail_mark} toolkit info: raised")
+        traceback.print_exc()
+        return 1
+    sources = payload["sources"]
+    packs = payload["packs"]
+    assert isinstance(sources, list) and isinstance(packs, list)
+    print(
+        f"  {ok_mark} toolkit info: {payload['version']}, "
+        f"{len(sources)} source(s), {len(packs)} pack(s)"
+    )
+    if not sources or not packs:
+        print("toolkit info answered with no sources or no packs")
+        return 1
     return 0
 
 
@@ -47,9 +77,11 @@ def main() -> None:
 
     configure_logging(logging.WARNING)
 
+    from anastomosis.commands.run import get_toolkit_info
     from anastomosis.gui.shell import launch
 
     try:
+        get_toolkit_info()  # before launch: the bridge must not first-import pydantic
         launch()
     except Exception as exc:  # top-level entry: a user must never see a raw traceback
         # Type name only, never exc's message: it may embed input (RULES.md 2).

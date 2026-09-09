@@ -334,7 +334,7 @@ jobs:
       - name: Extract this version's CHANGELOG section as the release notes
         # Slice the `## [<version>] — <date>` section out of CHANGELOG.md (up to
         # the next `## [` header) so the GitHub release body is the curated notes.
-        # generate_release_notes (below) appends GitHub's auto PR list to this.
+        # This IS the release body; nothing is appended to it.
         shell: bash
         # Same discipline as the assert above: the job output reaches the script
         # through the environment, not through `${{ }}` interpolation.
@@ -428,10 +428,13 @@ jobs:
             installer/*.cdx.json
             installer/*.msix
           fail_on_unmatched_files: true
-          # The curated CHANGELOG section, with GitHub's auto-generated "What's
-          # Changed" PR list appended after it.
+          # The curated CHANGELOG section IS the release note. GitHub's
+          # generator appends one line per merged pull request — 190 of them on
+          # v0.8.0, which buried the notes a person wrote under a machine's
+          # commit log. The compare link at the foot of CHANGELOG.md is the
+          # route to that list for anyone who wants it.
           body_path: RELEASE_NOTES.md
-          generate_release_notes: true
+          generate_release_notes: false
           # Pre-1.0 versions are alphas by this project's own convention
           # (README/CHANGELOG framing, the Alpha trove classifier) — flag the
           # GitHub release accordingly instead of presenting it as stable.

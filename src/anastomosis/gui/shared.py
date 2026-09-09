@@ -8,11 +8,14 @@ without a cycle. The underscore-prefixed names stay public:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from anastomosis.core.logutil import exc_tag
 from anastomosis.gui.events import error_event
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from anastomosis.deliver.router import TransitMap
@@ -96,9 +99,10 @@ def fail_result(
 ) -> dict[str, object]:
     """Convert a caught exception to the no-traceback error contract.
 
-    Emits :func:`~anastomosis.gui.events.error_event` with the exception's
-    TYPE name only; every controller/console ``_fail`` method delegates here.
+    Emits :func:`~anastomosis.gui.events.error_event` and logs the exception's
+    TYPE name — never ``exc_info``, which an unfiltered logger prints raw.
     """
     tag = exc_tag(exc)
+    logger.error("%s/%s failed: %s", flow, stage, tag)
     emit(error_event(flow, stage, tag))
     return {"ok": False, "error": tag}

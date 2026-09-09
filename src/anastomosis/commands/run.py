@@ -496,6 +496,40 @@ def _pack_infos() -> list[PackInfo]:
     return packs
 
 
+def toolkit_payload(toolkit: ToolkitInfo) -> dict[str, object]:
+    """``ToolkitInfo`` as the dashboard's JSON, without the ``ok`` envelope.
+
+    Beside the dataclasses it reads; the GUI self-check calls it directly, where
+    an exception keeps its traceback instead of becoming a tag.
+    """
+    return {
+        "version": toolkit.version,
+        "extras": dict(toolkit.extras),
+        "sources": [
+            {
+                "name": source.name,
+                "display": source.display,
+                "description": source.description,
+                "selection": source.selection,
+            }
+            for source in toolkit.sources
+        ],
+        "packs": [
+            {
+                "name": pack.name,
+                "display": pack.display,
+                "available": pack.available,
+                "origin": pack.origin,
+                # The exact directory a run naming this layout binds to; three
+                # origins can answer to one name, and Teach shows which.
+                "root": pack.root,
+                "sections": pack.sections,
+            }
+            for pack in toolkit.packs
+        ],
+    }
+
+
 def get_toolkit_info() -> ToolkitInfo:
     """Probe installed extras, registered sources, and discovered packs.
 

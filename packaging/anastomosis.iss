@@ -32,8 +32,11 @@ UninstallDisplayIcon={app}\gui\Anastomosis.exe
 ; Setup wizard branding — all three renditions derive from the one SVG
 ; master (assets/icon/icon.svg) via tools/make_icons.py.
 SetupIconFile=assets\icon\icon.ico
-WizardImageFile=assets\installer\wizard.bmp
-WizardSmallImageFile=assets\installer\wizard-small.bmp
+; One rendition per DPI step (tools/make_icons.py rasterises each from the SVG
+; master). Inno picks the closest and draws it 1:1; with a single file it
+; stretches the 100 % one, which is visibly soft on any modern display.
+WizardImageFile=assets\installer\wizard.bmp,assets\installer\wizard-125.bmp,assets\installer\wizard-150.bmp,assets\installer\wizard-175.bmp,assets\installer\wizard-200.bmp
+WizardSmallImageFile=assets\installer\wizard-small.bmp,assets\installer\wizard-small-125.bmp,assets\installer\wizard-small-150.bmp,assets\installer\wizard-small-175.bmp,assets\installer\wizard-small-200.bmp
 ; The wizard chrome runs the native dark style (Inno >= 6.6): the same warm
 ; near-black ground the wizard bitmaps and the app itself use, so the install
 ; experience is one surface with the product, not a beige dialog handing off

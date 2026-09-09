@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from anastomosis.commands import selfcheck
 from anastomosis.commands.selfcheck import check_bundled_assets, is_frozen
 
@@ -101,3 +103,22 @@ def test_tebra_check_passes_against_the_real_bundled_pack() -> None:
     """Sanity: against the shipped tree the bundled tebra pack resolves and loads."""
     check = selfcheck._check_tebra_pack()
     assert check.ok is True, check.detail
+
+
+def test_the_gui_self_check_fails_loudly_when_the_toolkit_will_not_answer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The bundled-asset checks cannot see this: they look at files, and info()
+    reaches every source adapter and every pack context."""
+    import anastomosis.commands.run as run_mod
+    from anastomosis.gui.__main__ import _self_check_info
+
+    def boom(_toolkit: object) -> None:
+        raise AttributeError("PackInfo has no attribute 'origin'")
+
+    monkeypatch.setattr(run_mod, "toolkit_payload", boom)
+    code = _self_check_info(object())
+    out = capsys.readouterr()
+    assert code == 1
+    assert "toolkit info: raised" in out.out
+    assert "AttributeError" in out.err

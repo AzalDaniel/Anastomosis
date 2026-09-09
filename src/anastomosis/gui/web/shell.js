@@ -96,7 +96,12 @@
     if (!hasApi()) return;
     try {
       const info = await window.pywebview.api.info();
-      if (!info || !info.ok) return;
+      if (!info || !info.ok) {
+        // Returning quietly here paints a dashboard that looks fine and is
+        // empty: no version, no sources, no layouts, and nothing said.
+        showBanner(`Could not read the toolkit: ${(info && info.error) || "no answer"}`);
+        return;
+      }
       INFO = info;
       VERSION = String(info.version || "");
       const line = el("about-version");

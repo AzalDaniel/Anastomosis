@@ -188,3 +188,46 @@ def test_remote_debugging_port_survives_a_pywebview_without_the_key(
     messages = [record.getMessage() for record in caplog.records]
     assert any("remote debugging port not set" in message for message in messages)
     assert any("KeyError" in message for message in messages)
+
+
+def test_a_swallowed_query_failure_still_leaves_a_local_trace(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only the exception TYPE may cross to JS (RULES.md 2), so the log is the
+    only place a frozen-build failure can leave its traceback."""
+    from anastomosis.gui.shared import fail_result
+
+    emitted: list[dict[str, object]] = []
+    with caplog.at_level(logging.ERROR, logger="anastomosis.gui.shared"):
+        result = fail_result(emitted.append, "query", "info", ModuleNotFoundError("no module x"))
+
+    assert result == {"ok": False, "error": "ModuleNotFoundError"}
+    assert emitted and emitted[0]["stage"] == "info"
+    record = next(r for r in caplog.records if r.name == "anastomosis.gui.shared")
+    assert record.levelno == logging.ERROR
+    assert "query/info failed: ModuleNotFoundError" in record.getMessage()
+
+
+def test_the_record_model_is_imported_before_the_window_opens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pydantic is not safe to first-import from two threads, and the bridge
+    answers info() on a worker: this import belongs on the main thread."""
+    import anastomosis.gui.__main__ as entry
+
+    seen: dict[str, bool] = {}
+
+    def fake_launch() -> None:
+        seen["model_imported"] = "anastomosis.core.model.base" in sys.modules
+
+    monkeypatch.setattr(sys, "argv", ["anastomosis"])
+    monkeypatch.setattr("anastomosis.gui.shell.launch", fake_launch)
+    for name in [n for n in sys.modules if n.startswith("anastomosis.core.model")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    entry.main()
+
+    assert seen.get("model_imported") is True, (
+        "the record model was still unimported when the window opened, so its "
+        "first import would land on the bridge's worker thread"
+    )
