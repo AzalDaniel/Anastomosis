@@ -34,7 +34,7 @@
 # AND raising the workflow's gate with it; the two must agree, and
 # tests/unit/test_workflow_supply_chain.py reads the bound so a bump that
 # admits a 2.5 release fails CI before a tag is spent.
-requires = ["hatchling>=1.27,<1.30"]
+requires = ["hatchling>=1.27,<1.33"]
 build-backend = "hatchling.build"
 
 [project]
