@@ -66,7 +66,7 @@ jobs:
       # init and analyze are two halves of one release: the CodeQL Action
       # rejects a run where they disagree, so they carry the same SHA/version
       # on purpose (test_codeql_policy.py pins that the two never drift).
-      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: python
           config-file: ./.github/codeql/codeql-config.yml
@@ -84,7 +84,7 @@ jobs:
       # `output` writes the SARIF to disk as well as uploading it; the dismissal
       # step reads that copy, and `id` is what lets it name the upload it
       # belongs to. One language, so the file is python.sarif.
-      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         id: analyze
         with:
           output: sarif-results
